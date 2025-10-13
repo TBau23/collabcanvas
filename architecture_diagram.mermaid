@@ -1,0 +1,118 @@
+graph TB
+    subgraph "Client Browser"
+        subgraph "React Components"
+            App[App.jsx]
+            Auth[Auth Components<br/>Login/Register]
+            Canvas[Canvas Component<br/>+ Konva Stage]
+            Toolbar[Canvas Toolbar]
+            CursorLayer[Cursor Layer]
+            PresencePanel[Presence Panel]
+        end
+        
+        subgraph "State Management"
+            AuthStore[Auth Store<br/>Zustand]
+            CanvasStore[Canvas Store<br/>Zustand]
+            PresenceStore[Presence Store<br/>Zustand]
+        end
+        
+        subgraph "Custom Hooks"
+            useCanvas[useCanvas]
+            useRealtimeSync[useRealtimeSync]
+            useCursors[useCursors]
+            usePresence[usePresence]
+        end
+        
+        subgraph "Service Layer"
+            AuthService[auth.service.js]
+            CanvasService[canvas.service.js]
+            CursorService[cursor.service.js]
+            PresenceService[presence.service.js]
+            FirebaseInit[firebase.js<br/>SDK Init]
+        end
+        
+        subgraph "Canvas Rendering"
+            Konva[Konva.js Library<br/>HTML5 Canvas]
+        end
+    end
+    
+    subgraph "Firebase Backend"
+        subgraph "Firebase Auth"
+            FBAuth[Authentication<br/>Email/Password]
+        end
+        
+        subgraph "Firestore Database"
+            CanvasCollection["canvases/{canvasId}"]
+            ObjectsCollection["objects/{objectId}<br/>type, x, y, width, height<br/>color, rotation, etc."]
+        end
+        
+        subgraph "Realtime Database"
+            CursorsNode["sessions/{canvasId}/cursors/{userId}<br/>x, y, name, color"]
+            PresenceNode["sessions/{canvasId}/presence/{userId}<br/>online, name, lastSeen"]
+        end
+        
+        subgraph "Firebase Hosting"
+            Hosting[Static Site Hosting<br/>Deployed App]
+        end
+    end
+    
+    %% Component to Store connections
+    Auth --> AuthStore
+    Canvas --> CanvasStore
+    PresencePanel --> PresenceStore
+    CursorLayer --> CanvasStore
+    
+    %% Store to Hook connections
+    AuthStore --> useCanvas
+    CanvasStore --> useRealtimeSync
+    PresenceStore --> usePresence
+    
+    %% Hook to Service connections
+    useCanvas --> CanvasService
+    useRealtimeSync --> CanvasService
+    useCursors --> CursorService
+    usePresence --> PresenceService
+    Auth --> AuthService
+    
+    %% Service to Firebase Init
+    AuthService --> FirebaseInit
+    CanvasService --> FirebaseInit
+    CursorService --> FirebaseInit
+    PresenceService --> FirebaseInit
+    
+    %% Canvas rendering
+    Canvas --> Konva
+    CursorLayer --> Konva
+    
+    %% Firebase connections
+    FirebaseInit -.->|REST API| FBAuth
+    FirebaseInit -.->|Real-time Listeners<br/>onSnapshot| ObjectsCollection
+    FirebaseInit -.->|WebSocket| CursorsNode
+    FirebaseInit -.->|WebSocket<br/>onDisconnect| PresenceNode
+    
+    %% Data flow labels
+    AuthService -.->|login/register/logout| FBAuth
+    CanvasService -.->|CRUD Operations<br/>Create/Update/Delete| ObjectsCollection
+    CanvasService -.->|Listen to Changes<br/>< 100ms sync| ObjectsCollection
+    CursorService -.->|Throttled Updates<br/>~50ms| CursorsNode
+    CursorService -.->|Subscribe to Changes| CursorsNode
+    PresenceService -.->|Set Online Status| PresenceNode
+    PresenceService -.->|Auto Cleanup| PresenceNode
+    
+    %% Firestore to Canvas sync
+    ObjectsCollection -.->|Real-time Updates<br/>Broadcast to all clients| CanvasService
+    CursorsNode -.->|Cursor Position Updates| CursorService
+    PresenceNode -.->|User Join/Leave Events| PresenceService
+    
+    %% App deployment
+    Hosting -.->|Serves| App
+    
+    %% Styling
+    classDef firebase fill:#FFA611,stroke:#333,stroke-width:2px,color:#000
+    classDef client fill:#61DAFB,stroke:#333,stroke-width:2px,color:#000
+    classDef store fill:#7C3AED,stroke:#333,stroke-width:2px,color:#fff
+    classDef service fill:#10B981,stroke:#333,stroke-width:2px,color:#000
+    
+    class FBAuth,CanvasCollection,ObjectsCollection,CursorsNode,PresenceNode,Hosting firebase
+    class App,Auth,Canvas,Toolbar,CursorLayer,PresencePanel client
+    class AuthStore,CanvasStore,PresenceStore store
+    class AuthService,CanvasService,CursorService,PresenceService,FirebaseInit service
