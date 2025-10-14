@@ -2,7 +2,7 @@ import { db } from './firebase';
 import { doc, setDoc, collection, onSnapshot } from 'firebase/firestore';
 
 const CANVAS_ID = 'main-canvas';
-const STALE_THRESHOLD = 30000; // 30 seconds
+const STALE_THRESHOLD = 30000; // 30 seconds (6 missed heartbeats before considering offline)
 
 /**
  * Hash userId to a consistent color (reuse from cursor colors)

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Stage, Layer, Circle, Text, Rect } from 'react-konva';
+import { Stage, Layer, Circle, Text, Rect, Ellipse, Transformer } from 'react-konva';
 import { useAuth } from '../../context/AuthContext';
 import { updateCursor, subscribeToCursors, deleteCursor } from '../../services/cursorService';
 import { createShape, updateShape, subscribeToShapes } from '../../services/canvasService';
@@ -11,6 +11,8 @@ import './Canvas.css';
 const Canvas = () => {
   const { user } = useAuth();
   const stageRef = useRef(null);
+  const transformerRef = useRef(null);
+  const shapeRefs = useRef({});
   const isPanning = useRef(false);
   
   // Canvas state
@@ -23,6 +25,7 @@ const Canvas = () => {
   
   // Tool and shape state
   const [currentTool, setCurrentTool] = useState('select');
+  const [currentColor, setCurrentColor] = useState('#4A90E2');
   const [shapes, setShapes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   
@@ -116,10 +119,10 @@ const Canvas = () => {
     // Set user online immediately
     setUserOnline(user.uid, userName);
 
-    // Set up heartbeat to keep presence alive (every 10 seconds)
+    // Set up heartbeat to keep presence alive (every 5 seconds for quicker updates)
     const heartbeatInterval = setInterval(() => {
       setUserOnline(user.uid, userName);
-    }, 10000);
+    }, 5000);
 
     // Cleanup on unmount
     return () => {
@@ -127,6 +130,16 @@ const Canvas = () => {
       setUserOffline(user.uid);
     };
   }, [user]);
+
+  // Update Transformer when selection changes
+  useEffect(() => {
+    if (selectedId && transformerRef.current && shapeRefs.current[selectedId]) {
+      transformerRef.current.nodes([shapeRefs.current[selectedId]]);
+      transformerRef.current.getLayer().batchDraw();
+    } else if (transformerRef.current) {
+      transformerRef.current.nodes([]);
+    }
+  }, [selectedId]);
 
   // Clean up cursor and presence on window close/refresh
   useEffect(() => {
@@ -216,14 +229,14 @@ const Canvas = () => {
     }
   };
 
-  // Handle stage click (for creating rectangles or deselecting)
+  // Handle stage click (for creating shapes or deselecting)
   const handleStageClick = (e) => {
     // Only handle if clicked on stage itself (not a shape)
     const clickedOnEmpty = e.target === e.target.getStage();
     
     if (clickedOnEmpty) {
-      if (currentTool === 'rectangle') {
-        // Create rectangle at click position
+      if (currentTool === 'rectangle' || currentTool === 'ellipse') {
+        // Create shape at click position
         const stage = e.target.getStage();
         const pos = stage.getPointerPosition();
         
@@ -231,14 +244,19 @@ const Canvas = () => {
         const transform = stage.getAbsoluteTransform().copy().invert();
         const clickPos = transform.point(pos);
 
+        // Shape-specific defaults
+        const shapeDefaults = {
+          rectangle: { width: 150, height: 100 },
+          ellipse: { width: 120, height: 80 },
+        };
+
         const newShape = {
           id: crypto.randomUUID(),
-          type: 'rectangle',
+          type: currentTool,
           x: clickPos.x,
           y: clickPos.y,
-          width: 150,
-          height: 100,
-          fill: '#4A90E2',
+          ...shapeDefaults[currentTool],
+          fill: currentColor,
           rotation: 0,
           updatedBy: user.uid,
           updatedAt: Date.now(),
@@ -297,6 +315,51 @@ const Canvas = () => {
     updateShape(user.uid, shapeId, { x: newX, y: newY });
   };
 
+  // Handle shape transform (resize)
+  const handleShapeTransform = (shapeId, node) => {
+    // Get the new dimensions
+    const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
+    
+    const newWidth = Math.max(20, node.width() * scaleX);
+    const newHeight = Math.max(20, node.height() * scaleY);
+    
+    // Constrain max size
+    const constrainedWidth = Math.min(2000, newWidth);
+    const constrainedHeight = Math.min(2000, newHeight);
+
+    // Reset scale
+    node.scaleX(1);
+    node.scaleY(1);
+
+    // Optimistic update
+    const newShapes = shapes.map((shape) => {
+      if (shape.id === shapeId) {
+        return {
+          ...shape,
+          x: node.x(),
+          y: node.y(),
+          width: constrainedWidth,
+          height: constrainedHeight,
+          rotation: node.rotation(),
+          updatedBy: user.uid,
+          updatedAt: Date.now(),
+        };
+      }
+      return shape;
+    });
+    setShapes(newShapes);
+
+    // Save to Firestore
+    updateShape(user.uid, shapeId, {
+      x: node.x(),
+      y: node.y(),
+      width: constrainedWidth,
+      height: constrainedHeight,
+      rotation: node.rotation(),
+    });
+  };
+
   // Handle tool change
   const handleToolChange = (tool) => {
     setCurrentTool(tool);
@@ -305,9 +368,19 @@ const Canvas = () => {
     }
   };
 
+  // Handle color change
+  const handleColorChange = (color) => {
+    setCurrentColor(color);
+  };
+
   return (
     <div className="canvas-container">
-      <CanvasToolbar currentTool={currentTool} onToolChange={handleToolChange} />
+      <CanvasToolbar 
+        currentTool={currentTool} 
+        currentColor={currentColor}
+        onToolChange={handleToolChange} 
+        onColorChange={handleColorChange}
+      />
       <PresencePanel users={onlineUsers} currentUser={user} />
       
       <Stage
@@ -326,24 +399,71 @@ const Canvas = () => {
       >
         {/* Shapes layer */}
         <Layer>
-          {shapes.map((shape) => (
-            <Rect
-              key={shape.id}
-              x={shape.x}
-              y={shape.y}
-              width={shape.width}
-              height={shape.height}
-              fill={shape.fill}
-              rotation={shape.rotation}
-              draggable={currentTool === 'select'}
-              onClick={(e) => handleShapeClick(e, shape.id)}
-              onDragStart={handleShapeDragStart}
-              onDragEnd={(e) => handleShapeDragEnd(shape.id, e)}
-              // Visual feedback for selected shape
-              stroke={selectedId === shape.id ? '#0066FF' : undefined}
-              strokeWidth={selectedId === shape.id ? 3 : 0}
-            />
-          ))}
+          {shapes.map((shape) => {
+            const isSelected = selectedId === shape.id;
+            const commonProps = {
+              key: shape.id,
+              ref: (node) => {
+                if (node) {
+                  shapeRefs.current[shape.id] = node;
+                }
+              },
+              x: shape.x,
+              y: shape.y,
+              fill: shape.fill,
+              rotation: shape.rotation,
+              draggable: currentTool === 'select',
+              onClick: (e) => handleShapeClick(e, shape.id),
+              onDragStart: handleShapeDragStart,
+              onDragEnd: (e) => handleShapeDragEnd(shape.id, e),
+              onTransformEnd: (e) => handleShapeTransform(shape.id, e.target),
+              stroke: isSelected ? '#0066FF' : undefined,
+              strokeWidth: isSelected ? 3 : 0,
+            };
+
+            if (shape.type === 'rectangle') {
+              return (
+                <Rect
+                  {...commonProps}
+                  width={shape.width}
+                  height={shape.height}
+                />
+              );
+            } else if (shape.type === 'ellipse') {
+              return (
+                <Ellipse
+                  {...commonProps}
+                  radiusX={shape.width / 2}
+                  radiusY={shape.height / 2}
+                  offsetX={-shape.width / 2}
+                  offsetY={-shape.height / 2}
+                />
+              );
+            }
+            return null;
+          })}
+          
+          {/* Transformer for resize handles */}
+          <Transformer
+            ref={transformerRef}
+            enabledAnchors={[
+              'top-left',
+              'top-right',
+              'bottom-left',
+              'bottom-right',
+              'middle-left',
+              'middle-right',
+              'top-center',
+              'bottom-center',
+            ]}
+            rotateEnabled={false}
+            borderStroke="#0066FF"
+            borderStrokeWidth={2}
+            anchorStroke="#0066FF"
+            anchorFill="white"
+            anchorSize={8}
+            anchorCornerRadius={2}
+          />
         </Layer>
 
         {/* Cursors layer (on top) */}
