@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Stage, Layer, Circle, Text, Rect } from 'react-konva';
 import { useAuth } from '../../context/AuthContext';
 import { updateCursor, subscribeToCursors, deleteCursor } from '../../services/cursorService';
+import { createShape, updateShape, subscribeToShapes } from '../../services/canvasService';
 import CanvasToolbar from './CanvasToolbar';
 import './Canvas.css';
 
@@ -46,6 +47,47 @@ const Canvas = () => {
     const unsubscribe = subscribeToCursors((remoteCursors) => {
       const otherCursors = remoteCursors.filter((c) => c.userId !== user.uid);
       setCursors(otherCursors);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  // Subscribe to shape updates from Firestore
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = subscribeToShapes((remoteShapes) => {
+      // Update shapes from Firestore
+      // Use functional update to ensure we're working with latest state
+      setShapes((currentShapes) => {
+        // Create a map of current shapes for easy lookup
+        const currentShapesMap = new Map(
+          currentShapes.map((shape) => [shape.id, shape])
+        );
+
+        // Merge remote shapes with local shapes
+        const mergedShapes = remoteShapes.map((remoteShape) => {
+          const localShape = currentShapesMap.get(remoteShape.id);
+
+          // If shape doesn't exist locally, add it
+          if (!localShape) {
+            return remoteShape;
+          }
+
+          // If remote shape is newer, use it
+          // Otherwise keep local version (for optimistic updates)
+          if (
+            remoteShape.updatedAt > (localShape.updatedAt || 0) &&
+            remoteShape.updatedBy !== user.uid
+          ) {
+            return remoteShape;
+          }
+
+          return localShape;
+        });
+
+        return mergedShapes;
+      });
     });
 
     return unsubscribe;
@@ -163,11 +205,17 @@ const Canvas = () => {
           height: 100,
           fill: '#4A90E2',
           rotation: 0,
+          updatedBy: user.uid,
+          updatedAt: Date.now(),
         };
 
+        // Optimistic update: Add to local state immediately
         setShapes([...shapes, newShape]);
         setSelectedId(newShape.id);
         setCurrentTool('select'); // Auto-switch back to select mode
+
+        // Save to Firestore
+        createShape(user.uid, newShape);
       } else {
         // Deselect
         setSelectedId(null);
@@ -192,17 +240,26 @@ const Canvas = () => {
 
   // Handle shape drag end
   const handleShapeDragEnd = (shapeId, e) => {
+    const newX = e.target.x();
+    const newY = e.target.y();
+
+    // Optimistic update: Update local state immediately
     const newShapes = shapes.map((shape) => {
       if (shape.id === shapeId) {
         return {
           ...shape,
-          x: e.target.x(),
-          y: e.target.y(),
+          x: newX,
+          y: newY,
+          updatedBy: user.uid,
+          updatedAt: Date.now(),
         };
       }
       return shape;
     });
     setShapes(newShapes);
+
+    // Save to Firestore
+    updateShape(user.uid, shapeId, { x: newX, y: newY });
   };
 
   // Handle tool change
