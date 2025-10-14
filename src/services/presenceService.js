@@ -2,19 +2,26 @@ import { db } from './firebase';
 import { doc, setDoc, collection, onSnapshot } from 'firebase/firestore';
 
 const CANVAS_ID = 'main-canvas';
-const STALE_THRESHOLD = 30000; // 30 seconds (6 missed heartbeats before considering offline)
+const STALE_THRESHOLD = 12000; // 12 seconds (snappy disconnect detection)
 
 /**
  * Hash userId to a consistent color (reuse from cursor colors)
  */
 const getUserColor = (userId) => {
-  const colors = [
-    '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', 
-    '#98D8C8', '#F7DC6F', '#E74C3C', '#3498DB',
-    '#9B59B6', '#1ABC9C', '#F39C12', '#E67E22'
-  ];
-  const hash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return colors[hash % colors.length];
+  // Generate a hash from the userId
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    const char = userId.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  
+  // Use the hash to generate HSL values for better color distribution
+  const hue = Math.abs(hash) % 360; // 0-359 degrees
+  const saturation = 65 + (Math.abs(hash >> 8) % 25); // 65-90% for vibrant colors
+  const lightness = 45 + (Math.abs(hash >> 16) % 20); // 45-65% for good contrast
+  
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
 };
 
 /**
