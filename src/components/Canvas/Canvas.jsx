@@ -3,7 +3,9 @@ import { Stage, Layer, Circle, Text, Rect } from 'react-konva';
 import { useAuth } from '../../context/AuthContext';
 import { updateCursor, subscribeToCursors, deleteCursor } from '../../services/cursorService';
 import { createShape, updateShape, subscribeToShapes } from '../../services/canvasService';
+import { setUserOnline, subscribeToPresence, setUserOffline } from '../../services/presenceService';
 import CanvasToolbar from './CanvasToolbar';
+import PresencePanel from '../Presence/PresencePanel';
 import './Canvas.css';
 
 const Canvas = () => {
@@ -13,6 +15,7 @@ const Canvas = () => {
   
   // Canvas state
   const [cursors, setCursors] = useState([]);
+  const [onlineUsers, setOnlineUsers] = useState([]);
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
     height: window.innerHeight - 60,
@@ -93,19 +96,51 @@ const Canvas = () => {
     return unsubscribe;
   }, [user]);
 
-  // Clean up cursor on window close/refresh
+  // Subscribe to presence updates
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = subscribeToPresence((users) => {
+      setOnlineUsers(users);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  // Initialize presence and set up heartbeat
+  useEffect(() => {
+    if (!user) return;
+
+    const userName = user.displayName || user.email;
+
+    // Set user online immediately
+    setUserOnline(user.uid, userName);
+
+    // Set up heartbeat to keep presence alive (every 10 seconds)
+    const heartbeatInterval = setInterval(() => {
+      setUserOnline(user.uid, userName);
+    }, 10000);
+
+    // Cleanup on unmount
+    return () => {
+      clearInterval(heartbeatInterval);
+      setUserOffline(user.uid);
+    };
+  }, [user]);
+
+  // Clean up cursor and presence on window close/refresh
   useEffect(() => {
     if (!user) return;
 
     const handleBeforeUnload = () => {
       deleteCursor(user.uid);
+      setUserOffline(user.uid);
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      deleteCursor(user.uid);
     };
   }, [user]);
 
@@ -273,6 +308,7 @@ const Canvas = () => {
   return (
     <div className="canvas-container">
       <CanvasToolbar currentTool={currentTool} onToolChange={handleToolChange} />
+      <PresencePanel users={onlineUsers} currentUser={user} />
       
       <Stage
         ref={stageRef}
