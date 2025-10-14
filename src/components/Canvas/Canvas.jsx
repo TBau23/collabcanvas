@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Stage, Layer, Circle, Text, Rect, Ellipse, Transformer } from 'react-konva';
 import { useAuth } from '../../context/AuthContext';
 import { updateCursor, subscribeToCursors, deleteCursor } from '../../services/cursorService';
-import { createShape, updateShape, subscribeToShapes } from '../../services/canvasService';
+import { createShape, updateShape, deleteShape, subscribeToShapes } from '../../services/canvasService';
 import { setUserOnline, subscribeToPresence, setUserOffline } from '../../services/presenceService';
 import CanvasToolbar from './CanvasToolbar';
 import PresencePanel from '../Presence/PresencePanel';
@@ -71,6 +71,14 @@ const Canvas = () => {
           currentShapes.map((shape) => [shape.id, shape])
         );
 
+        // Get remote shape IDs
+        const remoteShapeIds = new Set(remoteShapes.map(s => s.id));
+
+        // Remove shapes that don't exist remotely (deleted by other users)
+        const existingShapes = currentShapes.filter(shape => 
+          remoteShapeIds.has(shape.id) || shape.updatedBy === user.uid
+        );
+
         // Merge remote shapes with local shapes
         const mergedShapes = remoteShapes.map((remoteShape) => {
           const localShape = currentShapesMap.get(remoteShape.id);
@@ -92,7 +100,12 @@ const Canvas = () => {
           return localShape;
         });
 
-        return mergedShapes;
+        // Combine existing local shapes with merged remote shapes
+        const localOnlyShapes = existingShapes.filter(shape => 
+          !remoteShapeIds.has(shape.id) && shape.updatedBy === user.uid
+        );
+
+        return [...mergedShapes, ...localOnlyShapes];
       });
     });
 
@@ -131,15 +144,47 @@ const Canvas = () => {
     };
   }, [user]);
 
-  // Update Transformer when selection changes
+  // Update Transformer and color picker when selection changes
   useEffect(() => {
     if (selectedId && transformerRef.current && shapeRefs.current[selectedId]) {
       transformerRef.current.nodes([shapeRefs.current[selectedId]]);
       transformerRef.current.getLayer().batchDraw();
+      
+      // Update color picker to match selected shape's color
+      const selectedShape = shapes.find(s => s.id === selectedId);
+      if (selectedShape) {
+        setCurrentColor(selectedShape.fill);
+      }
     } else if (transformerRef.current) {
       transformerRef.current.nodes([]);
     }
-  }, [selectedId]);
+  }, [selectedId, shapes]);
+
+  // Handle keyboard shortcuts (Delete key)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Delete or Backspace key
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+        // Prevent default behavior (like browser back navigation on Backspace)
+        e.preventDefault();
+        
+        // Delete from local state immediately (optimistic)
+        setShapes(shapes.filter(shape => shape.id !== selectedId));
+        
+        // Clear selection
+        setSelectedId(null);
+        
+        // Delete from Firestore
+        deleteShape(selectedId);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedId, shapes]);
 
   // Clean up cursor and presence on window close/refresh
   useEffect(() => {
@@ -371,6 +416,25 @@ const Canvas = () => {
   // Handle color change
   const handleColorChange = (color) => {
     setCurrentColor(color);
+    
+    // If a shape is selected, update its color immediately
+    if (selectedId) {
+      const newShapes = shapes.map((shape) => {
+        if (shape.id === selectedId) {
+          return {
+            ...shape,
+            fill: color,
+            updatedBy: user.uid,
+            updatedAt: Date.now(),
+          };
+        }
+        return shape;
+      });
+      setShapes(newShapes);
+      
+      // Save to Firestore
+      updateShape(user.uid, selectedId, { fill: color });
+    }
   };
 
   return (
