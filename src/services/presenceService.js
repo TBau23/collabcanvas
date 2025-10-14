@@ -2,7 +2,7 @@ import { db } from './firebase';
 import { doc, setDoc, collection, onSnapshot } from 'firebase/firestore';
 
 const CANVAS_ID = 'main-canvas';
-const STALE_THRESHOLD = 12000; // 12 seconds (snappy disconnect detection)
+const STALE_THRESHOLD = 15000; // 15 seconds to account for browser tab throttling 
 
 /**
  * Hash userId to a consistent color (reuse from cursor colors)
@@ -45,7 +45,7 @@ export const setUserOnline = async (userId, userName) => {
 
 /**
  * Subscribe to presence updates
- * Filters out users who haven't updated in last 30 seconds
+ * Filters out users who haven't updated in last STALE_THRESHOLD seconds
  * @param {Function} callback - Called with array of online user objects
  * @returns {Function} Unsubscribe function
  */

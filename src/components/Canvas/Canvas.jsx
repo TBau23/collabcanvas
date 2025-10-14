@@ -135,7 +135,7 @@ const Canvas = () => {
     // Set up heartbeat to keep presence alive (every 5 seconds for quicker updates)
     const heartbeatInterval = setInterval(() => {
       setUserOnline(user.uid, userName);
-    }, 5000);
+    }, 2000);
 
     // Cleanup on unmount
     return () => {
