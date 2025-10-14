@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './components/Auth/Login';
 import Register from './components/Auth/Register';
 import Header from './components/Layout/Header';
+import Canvas from './components/Canvas/Canvas';
 import './App.css';
 
 function AppContent() {
@@ -19,17 +20,13 @@ function AppContent() {
     );
   }
 
-  // If user is logged in, show canvas (placeholder for now)
+  // If user is logged in, show canvas with cursors
   if (user) {
     return (
       <div className="app">
         <Header />
         <main className="main-content">
-          <div className="canvas-placeholder">
-            <h2>Canvas Coming Soon! 🎨</h2>
-            <p>Logged in as: {user.displayName || user.email}</p>
-            <p>Authentication is working! Canvas will be added in PR #2.</p>
-          </div>
+          <Canvas />
         </main>
       </div>
     );
