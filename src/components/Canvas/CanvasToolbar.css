@@ -1,0 +1,58 @@
+.canvas-toolbar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 10;
+}
+
+.tool-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 2px solid transparent;
+  background: white;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 80px;
+}
+
+.tool-button:hover {
+  background: #f5f5f5;
+  border-color: #e0e0e0;
+}
+
+.tool-button.active {
+  background: #e8f0fe;
+  border-color: #667eea;
+}
+
+.tool-icon {
+  font-size: 24px;
+  color: #333;
+}
+
+.tool-button.active .tool-icon {
+  color: #667eea;
+}
+
+.tool-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #666;
+}
+
+.tool-button.active .tool-label {
+  color: #667eea;
+  font-weight: 600;
+}
+

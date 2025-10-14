@@ -336,7 +336,6 @@ export default function Canvas() {
 #### Part B: Create Rectangles
 - [ ] Add state: `const [shapes, setShapes] = useState([])`
 - [ ] Create `src/components/Canvas/CanvasToolbar.jsx`:
-  - Simple button: "Add Rectangle"
   - onClick handler passed from parent
 - [ ] In Canvas.jsx, add `handleAddRectangle`:
   - Generate unique ID: `crypto.randomUUID()`

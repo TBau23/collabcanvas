@@ -1,16 +1,30 @@
-import React, { useEffect, useState } from 'react';
-import { Stage, Layer, Circle, Text } from 'react-konva';
+import React, { useEffect, useState, useRef } from 'react';
+import { Stage, Layer, Circle, Text, Rect } from 'react-konva';
 import { useAuth } from '../../context/AuthContext';
 import { updateCursor, subscribeToCursors, deleteCursor } from '../../services/cursorService';
+import CanvasToolbar from './CanvasToolbar';
 import './Canvas.css';
 
 const Canvas = () => {
   const { user } = useAuth();
+  const stageRef = useRef(null);
+  const isPanning = useRef(false);
+  
+  // Canvas state
   const [cursors, setCursors] = useState([]);
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
-    height: window.innerHeight - 60, // Account for header height (~60px)
+    height: window.innerHeight - 60,
   });
+  
+  // Tool and shape state
+  const [currentTool, setCurrentTool] = useState('select');
+  const [shapes, setShapes] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  
+  // Pan and zoom state
+  const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
+  const [stageScale, setStageScale] = useState(1);
 
   // Handle window resize
   useEffect(() => {
@@ -30,7 +44,6 @@ const Canvas = () => {
     if (!user) return;
 
     const unsubscribe = subscribeToCursors((remoteCursors) => {
-      // Filter out own cursor
       const otherCursors = remoteCursors.filter((c) => c.userId !== user.uid);
       setCursors(otherCursors);
     });
@@ -43,7 +56,6 @@ const Canvas = () => {
     if (!user) return;
 
     const handleBeforeUnload = () => {
-      // Delete cursor when user closes window/tab
       deleteCursor(user.uid);
     };
 
@@ -51,7 +63,6 @@ const Canvas = () => {
 
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      // Also delete on component unmount
       deleteCursor(user.uid);
     };
   }, [user]);
@@ -68,15 +79,182 @@ const Canvas = () => {
     }
   };
 
+  // Handle zoom
+  const handleWheel = (e) => {
+    e.evt.preventDefault();
+
+    const stage = stageRef.current;
+    const oldScale = stage.scaleX();
+    const pointer = stage.getPointerPosition();
+
+    // Calculate new scale
+    const scaleBy = 1.1;
+    const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
+    
+    // Clamp scale between 0.1 and 3
+    const clampedScale = Math.max(0.1, Math.min(3, newScale));
+
+    // Calculate new position to zoom towards cursor
+    const mousePointTo = {
+      x: (pointer.x - stage.x()) / oldScale,
+      y: (pointer.y - stage.y()) / oldScale,
+    };
+
+    const newPos = {
+      x: pointer.x - mousePointTo.x * clampedScale,
+      y: pointer.y - mousePointTo.y * clampedScale,
+    };
+
+    setStageScale(clampedScale);
+    setStagePos(newPos);
+  };
+
+  // Handle stage mouse down (for panning)
+  const handleStageMouseDown = (e) => {
+    // Only pan if clicking on the stage itself (not a shape)
+    if (e.target === e.target.getStage()) {
+      isPanning.current = true;
+    }
+  };
+
+  // Handle stage mouse up
+  const handleStageMouseUp = () => {
+    isPanning.current = false;
+  };
+
+  // Handle stage mouse move (for panning)
+  const handleStageMouseMove = (e) => {
+    // Handle cursor tracking
+    handleMouseMove(e);
+
+    // Handle panning
+    if (isPanning.current && currentTool === 'select') {
+      const stage = stageRef.current;
+      const newPos = {
+        x: stagePos.x + e.evt.movementX,
+        y: stagePos.y + e.evt.movementY,
+      };
+      setStagePos(newPos);
+      stage.position(newPos);
+    }
+  };
+
+  // Handle stage click (for creating rectangles or deselecting)
+  const handleStageClick = (e) => {
+    // Only handle if clicked on stage itself (not a shape)
+    const clickedOnEmpty = e.target === e.target.getStage();
+    
+    if (clickedOnEmpty) {
+      if (currentTool === 'rectangle') {
+        // Create rectangle at click position
+        const stage = e.target.getStage();
+        const pos = stage.getPointerPosition();
+        
+        // Account for stage transform (pan/zoom)
+        const transform = stage.getAbsoluteTransform().copy().invert();
+        const clickPos = transform.point(pos);
+
+        const newShape = {
+          id: crypto.randomUUID(),
+          type: 'rectangle',
+          x: clickPos.x,
+          y: clickPos.y,
+          width: 150,
+          height: 100,
+          fill: '#4A90E2',
+          rotation: 0,
+        };
+
+        setShapes([...shapes, newShape]);
+        setSelectedId(newShape.id);
+        setCurrentTool('select'); // Auto-switch back to select mode
+      } else {
+        // Deselect
+        setSelectedId(null);
+      }
+    }
+  };
+
+  // Handle shape selection
+  const handleShapeClick = (e, shapeId) => {
+    e.cancelBubble = true; // Prevent stage click from firing
+    
+    if (currentTool === 'select') {
+      setSelectedId(shapeId);
+    }
+  };
+
+  // Handle shape drag start
+  const handleShapeDragStart = (e) => {
+    // Prevent panning when dragging a shape
+    isPanning.current = false;
+  };
+
+  // Handle shape drag end
+  const handleShapeDragEnd = (shapeId, e) => {
+    const newShapes = shapes.map((shape) => {
+      if (shape.id === shapeId) {
+        return {
+          ...shape,
+          x: e.target.x(),
+          y: e.target.y(),
+        };
+      }
+      return shape;
+    });
+    setShapes(newShapes);
+  };
+
+  // Handle tool change
+  const handleToolChange = (tool) => {
+    setCurrentTool(tool);
+    if (tool !== 'select') {
+      setSelectedId(null);
+    }
+  };
+
   return (
     <div className="canvas-container">
+      <CanvasToolbar currentTool={currentTool} onToolChange={handleToolChange} />
+      
       <Stage
+        ref={stageRef}
         width={dimensions.width}
         height={dimensions.height}
-        onMouseMove={handleMouseMove}
+        onMouseDown={handleStageMouseDown}
+        onMouseUp={handleStageMouseUp}
+        onMouseMove={handleStageMouseMove}
+        onWheel={handleWheel}
+        onClick={handleStageClick}
+        x={stagePos.x}
+        y={stagePos.y}
+        scaleX={stageScale}
+        scaleY={stageScale}
       >
+        {/* Shapes layer */}
         <Layer>
-          {/* Render remote cursors */}
+          {shapes.map((shape) => (
+            <Rect
+              key={shape.id}
+              x={shape.x}
+              y={shape.y}
+              width={shape.width}
+              height={shape.height}
+              fill={shape.fill}
+              rotation={shape.rotation}
+              draggable={currentTool === 'select'}
+              onClick={(e) => handleShapeClick(e, shape.id)}
+              onDragStart={handleShapeDragStart}
+              onDragEnd={(e) => handleShapeDragEnd(shape.id, e)}
+              // Visual feedback for selected shape
+              stroke={selectedId === shape.id ? '#0066FF' : undefined}
+              strokeWidth={selectedId === shape.id ? 3 : 0}
+            />
+          ))}
+        </Layer>
+
+        {/* Cursors layer (on top) */}
+        <Layer>
           {cursors.map((cursor) => (
             <React.Fragment key={cursor.userId}>
               <Circle
@@ -84,6 +262,7 @@ const Canvas = () => {
                 y={cursor.y}
                 radius={8}
                 fill={cursor.color}
+                listening={false}
               />
               <Text
                 x={cursor.x + 12}
@@ -92,6 +271,7 @@ const Canvas = () => {
                 fontSize={14}
                 fill={cursor.color}
                 fontStyle="bold"
+                listening={false}
               />
             </React.Fragment>
           ))}
@@ -102,4 +282,3 @@ const Canvas = () => {
 };
 
 export default Canvas;
-
