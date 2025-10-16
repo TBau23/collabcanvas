@@ -1,0 +1,4 @@
+-- agent is not using the colors I have defined, broadly we should just be using a more universal color palette
+-- agent chat should not block the main canvas, it should be a modal that can be closed and opened again
+-- canvas should open to the center of the canvas, not the top left
+-- shape updating is now working to some extent, but if I say something like "move the blue circle down 1000 pixels, it will also move other blue shapes (even squares) down 1000 pixels

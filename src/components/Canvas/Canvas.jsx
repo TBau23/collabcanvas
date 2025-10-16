@@ -6,6 +6,8 @@ import { createShape, updateShape, deleteShape, subscribeToShapes } from '../../
 import { setUserOnline, subscribeToPresence, setUserOffline } from '../../services/presenceService';
 import CanvasToolbar from './CanvasToolbar';
 import PresencePanel from '../Presence/PresencePanel';
+import AIButton from '../AI/AIButton';
+import AIModal from '../AI/AIModal';
 import './Canvas.css';
 
 const Canvas = () => {
@@ -32,6 +34,9 @@ const Canvas = () => {
   // Pan and zoom state
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const [stageScale, setStageScale] = useState(1);
+  
+  // AI modal state
+  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
 
   // Handle window resize
   useEffect(() => {
@@ -88,12 +93,9 @@ const Canvas = () => {
             return remoteShape;
           }
 
-          // If remote shape is newer, use it
-          // Otherwise keep local version (for optimistic updates)
-          if (
-            remoteShape.updatedAt > (localShape.updatedAt || 0) &&
-            remoteShape.updatedBy !== user.uid
-          ) {
+          // If remote shape is newer, use it (even if from same user - handles AI updates)
+          // Otherwise keep local version (for optimistic updates during drag)
+          if (remoteShape.updatedAt > (localShape.updatedAt || 0)) {
             return remoteShape;
           }
 
@@ -160,9 +162,16 @@ const Canvas = () => {
     }
   }, [selectedId, shapes]);
 
-  // Handle keyboard shortcuts (Delete key)
+  // Handle keyboard shortcuts (Delete key and Cmd+K for AI)
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Cmd+K or Ctrl+K to open AI modal
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsAIModalOpen(true);
+        return;
+      }
+      
       // Delete or Backspace key
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         // Prevent default behavior (like browser back navigation on Backspace)
@@ -466,7 +475,6 @@ const Canvas = () => {
           {shapes.map((shape) => {
             const isSelected = selectedId === shape.id;
             const commonProps = {
-              key: shape.id,
               ref: (node) => {
                 if (node) {
                   shapeRefs.current[shape.id] = node;
@@ -488,6 +496,7 @@ const Canvas = () => {
             if (shape.type === 'rectangle') {
               return (
                 <Rect
+                  key={shape.id}
                   {...commonProps}
                   width={shape.width}
                   height={shape.height}
@@ -496,6 +505,7 @@ const Canvas = () => {
             } else if (shape.type === 'ellipse') {
               return (
                 <Ellipse
+                  key={shape.id}
                   {...commonProps}
                   radiusX={shape.width / 2}
                   radiusY={shape.height / 2}
@@ -554,6 +564,14 @@ const Canvas = () => {
           ))}
         </Layer>
       </Stage>
+      
+      {/* AI Assistant */}
+      <AIButton onClick={() => setIsAIModalOpen(true)} />
+      <AIModal 
+        isOpen={isAIModalOpen}
+        onClose={() => setIsAIModalOpen(false)}
+        currentShapes={shapes}
+      />
     </div>
   );
 };
