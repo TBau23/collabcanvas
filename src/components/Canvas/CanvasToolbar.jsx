@@ -41,6 +41,14 @@ const CanvasToolbar = ({ currentTool, currentColor, onToolChange, onColorChange 
           <span className="tool-icon">⬭</span>
           <span className="tool-label">Ellipse</span>
         </button>
+        <button
+          className={`tool-button ${currentTool === 'text' ? 'active' : ''}`}
+          onClick={() => onToolChange('text')}
+          title="Text Tool"
+        >
+          <span className="tool-icon">T</span>
+          <span className="tool-label">Text</span>
+        </button>
       </div>
 
       {/* Color Picker */}

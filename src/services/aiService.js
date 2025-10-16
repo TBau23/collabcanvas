@@ -10,7 +10,7 @@ const SYSTEM_PROMPT = `You are an AI assistant that helps users create and manip
 
 Canvas Details:
 - Canvas size: 5000x5000 pixels
-- Available shapes: rectangle, ellipse
+- Available shapes: rectangle, ellipse, text
 - Coordinate system: (0, 0) is top-left, (5000, 5000) is bottom-right
 - Center of canvas is at (2500, 2500)
 - Colors: Use hex codes (e.g., "#FF0000") or common color names that will be converted
@@ -23,13 +23,16 @@ Your capabilities:
 5. Delete shapes using deleteShape
 
 Guidelines:
-- Use reasonable default sizes if not specified: 150x100 for rectangles, 100x100 for ellipses
+- Use reasonable default sizes if not specified: 150x100 for rectangles, 100x100 for ellipses, 200x50 for text
+- For text shapes, always include the text content in the text parameter (e.g., text: "Welcome")
+- Use font size 24-32 for normal text, 40-60 for headlines
 - When arranging multiple shapes, space them appropriately (50-100px apart)
-- For complex commands like "create a login form", break it down into multiple shapes with proper positioning
+- For complex commands like "create a login form", use text shapes for labels with appropriate shapes
 - Always call getCanvasState first if the command references existing shapes (e.g., "move the blue rectangle")
 - When multiple shapes match a description (e.g., multiple blue rectangles), operate on the first one and mention this in your response
 - For colors, convert common names to hex codes: red=#FF0000, blue=#0000FF, green=#00FF00, yellow=#FFFF00, orange=#FFA500, purple=#800080, pink=#FFC0CB, white=#FFFFFF, black=#000000, gray=#808080
-- When creating multiple shapes for UI components (forms, navbars, etc.), arrange them logically with proper spacing
+- When creating UI components (forms, buttons, labels), use text shapes for readability
+- Text should be readable - use dark colors (#000000, #333333) for text on light backgrounds
 
 Be concise and clear in your responses. Execute the requested actions and confirm what you did.`;
 
@@ -45,7 +48,7 @@ const TOOL_DEFINITIONS = [
         properties: {
           type: {
             type: 'string',
-            enum: ['rectangle', 'ellipse'],
+            enum: ['rectangle', 'ellipse', 'text'],
             description: 'Type of shape to create'
           },
           x: {
@@ -71,6 +74,14 @@ const TOOL_DEFINITIONS = [
           rotation: {
             type: 'number',
             description: 'Rotation in degrees (optional, default 0)'
+          },
+          text: {
+            type: 'string',
+            description: 'Text content (required for text type)'
+          },
+          fontSize: {
+            type: 'number',
+            description: 'Font size in pixels (optional, default 24, for text type)'
           }
         },
         required: ['type', 'x', 'y', 'width', 'height', 'fill']
@@ -163,7 +174,7 @@ const TOOL_DEFINITIONS = [
               properties: {
                 type: {
                   type: 'string',
-                  enum: ['rectangle', 'ellipse']
+                  enum: ['rectangle', 'ellipse', 'text']
                 },
                 x: {
                   type: 'number'
@@ -225,6 +236,11 @@ const executeTool = async (toolCall, userId, currentShapes) => {
           height: args.height,
           fill: args.fill,
           rotation: args.rotation || 0,
+          ...(args.type === 'text' && {
+            text: args.text || 'Text',
+            fontSize: args.fontSize || 24,
+            fontFamily: 'Arial'
+          })
         };
         await createShape(userId, shapeData);
         return {
@@ -292,6 +308,11 @@ const executeTool = async (toolCall, userId, currentShapes) => {
             height: shape.height,
             fill: shape.fill,
             rotation: shape.rotation || 0,
+            ...(shape.type === 'text' && {
+              text: shape.text || 'Text',
+              fontSize: shape.fontSize || 24,
+              fontFamily: 'Arial'
+            })
           };
           await createShape(userId, shapeData);
           createdShapes.push(shapeData);

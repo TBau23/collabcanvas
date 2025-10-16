@@ -112,8 +112,8 @@ const AIModal = ({ isOpen, onClose, currentShapes }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="ai-modal-overlay" onClick={onClose}>
-      <div className="ai-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="ai-modal-overlay">
+      <div className="ai-modal">
         {/* Header */}
         <div className="ai-modal-header">
           <div className="ai-modal-title">

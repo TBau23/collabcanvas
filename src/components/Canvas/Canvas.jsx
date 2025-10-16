@@ -37,6 +37,11 @@ const Canvas = () => {
   
   // AI modal state
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  
+  // Text editing state
+  const [editingText, setEditingText] = useState(null);
+  const [textEditorValue, setTextEditorValue] = useState('');
+  const [textEditorPosition, setTextEditorPosition] = useState({ x: 0, y: 0, width: 200 });
 
   // Handle window resize
   useEffect(() => {
@@ -165,6 +170,9 @@ const Canvas = () => {
   // Handle keyboard shortcuts (Delete key and Cmd+K for AI)
   useEffect(() => {
     const handleKeyDown = (e) => {
+      // Don't handle keyboard shortcuts while editing text
+      if (editingText) return;
+      
       // Cmd+K or Ctrl+K to open AI modal
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
@@ -193,7 +201,7 @@ const Canvas = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedId, shapes]);
+  }, [selectedId, shapes, editingText]);
 
   // Clean up cursor and presence on window close/refresh
   useEffect(() => {
@@ -289,7 +297,7 @@ const Canvas = () => {
     const clickedOnEmpty = e.target === e.target.getStage();
     
     if (clickedOnEmpty) {
-      if (currentTool === 'rectangle' || currentTool === 'ellipse') {
+      if (currentTool === 'rectangle' || currentTool === 'ellipse' || currentTool === 'text') {
         // Create shape at click position
         const stage = e.target.getStage();
         const pos = stage.getPointerPosition();
@@ -302,6 +310,7 @@ const Canvas = () => {
         const shapeDefaults = {
           rectangle: { width: 150, height: 100 },
           ellipse: { width: 120, height: 80 },
+          text: { width: 200, height: 50 },
         };
 
         const newShape = {
@@ -312,6 +321,11 @@ const Canvas = () => {
           ...shapeDefaults[currentTool],
           fill: currentColor,
           rotation: 0,
+          ...(currentTool === 'text' && { 
+            text: 'Double-click to edit',
+            fontSize: 24,
+            fontFamily: 'Arial'
+          }),
           updatedBy: user.uid,
           updatedAt: Date.now(),
         };
@@ -446,6 +460,50 @@ const Canvas = () => {
     }
   };
 
+  // Handle double-click on text to edit inline
+  const handleTextEdit = (shape) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    // Calculate position in screen coordinates
+    const textNode = shapeRefs.current[shape.id];
+    if (!textNode) return;
+
+    const textPosition = textNode.getAbsolutePosition();
+    const stageBox = stage.container().getBoundingClientRect();
+
+    // Deselect shape while editing
+    setSelectedId(null);
+    
+    setEditingText(shape.id);
+    setTextEditorValue(shape.text || '');
+    setTextEditorPosition({
+      x: stageBox.left + textPosition.x,
+      y: stageBox.top + textPosition.y,
+      width: shape.width * stageScale,
+      fontSize: (shape.fontSize || 24) * stageScale,
+    });
+  };
+
+  // Save edited text
+  const handleTextSave = () => {
+    if (!editingText) return;
+
+    const shape = shapes.find(s => s.id === editingText);
+    if (shape && textEditorValue !== shape.text) {
+      const updatedShapes = shapes.map(s =>
+        s.id === editingText
+          ? { ...s, text: textEditorValue, updatedBy: user.uid, updatedAt: Date.now() }
+          : s
+      );
+      setShapes(updatedShapes);
+      updateShape(user.uid, editingText, { text: textEditorValue });
+    }
+
+    setEditingText(null);
+    setTextEditorValue('');
+  };
+
   return (
     <div className="canvas-container">
       <CanvasToolbar 
@@ -513,6 +571,20 @@ const Canvas = () => {
                   offsetY={-shape.height / 2}
                 />
               );
+            } else if (shape.type === 'text') {
+              return (
+                <Text
+                  key={shape.id}
+                  {...commonProps}
+                  text={shape.text || 'Text'}
+                  fontSize={shape.fontSize || 24}
+                  fontFamily={shape.fontFamily || 'Arial'}
+                  width={shape.width}
+                  height={shape.height}
+                  visible={editingText !== shape.id}
+                  onDblClick={() => handleTextEdit(shape)}
+                />
+              );
             }
             return null;
           })}
@@ -564,6 +636,42 @@ const Canvas = () => {
           ))}
         </Layer>
       </Stage>
+      
+      {/* Inline Text Editor */}
+      {editingText && (
+        <textarea
+          autoFocus
+          value={textEditorValue}
+          onChange={(e) => setTextEditorValue(e.target.value)}
+          onBlur={handleTextSave}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleTextSave();
+            }
+            if (e.key === 'Escape') {
+              setEditingText(null);
+              setTextEditorValue('');
+            }
+          }}
+          style={{
+            position: 'fixed',
+            left: textEditorPosition.x + 'px',
+            top: textEditorPosition.y + 'px',
+            width: textEditorPosition.width + 'px',
+            fontSize: textEditorPosition.fontSize + 'px',
+            fontFamily: 'Arial',
+            border: '2px solid #0066FF',
+            outline: 'none',
+            padding: '4px',
+            resize: 'none',
+            overflow: 'hidden',
+            background: 'white',
+            zIndex: 1500,
+            minHeight: '1.5em',
+          }}
+        />
+      )}
       
       {/* AI Assistant */}
       <AIButton onClick={() => setIsAIModalOpen(true)} />
