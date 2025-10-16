@@ -204,6 +204,10 @@ Firestore security rules ensure:
 - Grid and snap-to-grid
 - Comments and annotations
 
+npm run build                           # Build production bundle
+firebase deploy --only firestore:rules  # Deploy security rules
+firebase deploy --only hosting          # Deploy static site
+
 ## 📝 License
 
 MIT
