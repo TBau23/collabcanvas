@@ -100,3 +100,66 @@
   transform: scale(1.05);
 }
 
+.color-input {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  border: 2px solid #ddd;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.color-input:hover {
+  transform: scale(1.1);
+  border-color: #667eea;
+}
+
+/* Layer Controls */
+.layer-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.tool-button.small {
+  min-width: 60px;
+  padding: 8px 12px;
+}
+
+.tool-label-small {
+  font-size: 10px;
+  font-weight: 500;
+  color: #666;
+}
+
+.tool-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tool-button:disabled:hover {
+  background: white;
+  border-color: transparent;
+  transform: none;
+}
+
+/* Export Button */
+.tool-button.export-button {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+}
+
+.tool-button.export-button .tool-icon {
+  color: white;
+}
+
+.tool-button.export-button .tool-label {
+  color: white;
+  font-weight: 600;
+}
+
+.tool-button.export-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+

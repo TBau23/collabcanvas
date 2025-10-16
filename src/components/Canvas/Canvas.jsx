@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Stage, Layer, Circle, Text, Rect, Ellipse, Transformer } from 'react-konva';
+import { Stage, Layer, Circle, Text, Rect, Ellipse, Transformer, Line } from 'react-konva';
 import { useAuth } from '../../context/AuthContext';
 import { updateCursor, subscribeToCursors, deleteCursor } from '../../services/cursorService';
 import { createShape, updateShape, deleteShape, subscribeToShapes } from '../../services/canvasService';
@@ -31,8 +31,14 @@ const Canvas = () => {
   const [shapes, setShapes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   
-  // Pan and zoom state
-  const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
+  // Pan and zoom state - initialize to center of canvas
+  const canvasSize = 5000;
+  const [stagePos, setStagePos] = useState(() => {
+    // Center the 5000x5000 canvas in the viewport
+    const centerX = window.innerWidth / 2 - canvasSize / 2;
+    const centerY = (window.innerHeight - 60) / 2 - canvasSize / 2;
+    return { x: centerX, y: centerY };
+  });
   const [stageScale, setStageScale] = useState(1);
   
   // AI modal state
@@ -504,6 +510,60 @@ const Canvas = () => {
     setTextEditorValue('');
   };
 
+  // Export canvas to PNG - only the defined 5000x5000 canvas area
+  const handleExport = () => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    // Export only the bounded canvas area
+    const dataURL = stage.toDataURL({ 
+      pixelRatio: 2,
+      x: 0,
+      y: 0,
+      width: canvasSize,
+      height: canvasSize
+    });
+    const link = document.createElement('a');
+    link.download = `canvas-${Date.now()}.png`;
+    link.href = dataURL;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Bring selected shape to front
+  const handleBringToFront = () => {
+    if (!selectedId) return;
+    
+    const selectedShape = shapes.find(s => s.id === selectedId);
+    if (!selectedShape) return;
+
+    // Move to end of array (rendered last = on top)
+    const newShapes = [
+      ...shapes.filter(s => s.id !== selectedId),
+      { ...selectedShape, updatedBy: user.uid, updatedAt: Date.now() }
+    ];
+    setShapes(newShapes);
+    
+    // Note: Z-index isn't stored in Firestore, it's determined by array order in local state
+    // For multi-user consistency, we'd need to add a z-index field to Firestore
+  };
+
+  // Send selected shape to back
+  const handleSendToBack = () => {
+    if (!selectedId) return;
+    
+    const selectedShape = shapes.find(s => s.id === selectedId);
+    if (!selectedShape) return;
+
+    // Move to start of array (rendered first = on bottom)
+    const newShapes = [
+      { ...selectedShape, updatedBy: user.uid, updatedAt: Date.now() },
+      ...shapes.filter(s => s.id !== selectedId)
+    ];
+    setShapes(newShapes);
+  };
+
   return (
     <div className="canvas-container">
       <CanvasToolbar 
@@ -511,6 +571,10 @@ const Canvas = () => {
         currentColor={currentColor}
         onToolChange={handleToolChange} 
         onColorChange={handleColorChange}
+        onExport={handleExport}
+        onBringToFront={handleBringToFront}
+        onSendToBack={handleSendToBack}
+        hasSelection={!!selectedId}
       />
       <PresencePanel users={onlineUsers} currentUser={user} />
       
@@ -528,6 +592,67 @@ const Canvas = () => {
         scaleX={stageScale}
         scaleY={stageScale}
       >
+        {/* Background Layer - Canvas Boundary */}
+        <Layer listening={false}>
+          {/* Canvas background - white 5000x5000 area */}
+          <Rect
+            x={0}
+            y={0}
+            width={canvasSize}
+            height={canvasSize}
+            fill="#FFFFFF"
+            shadowColor="rgba(0, 0, 0, 0.2)"
+            shadowBlur={20}
+            shadowOffset={{ x: 0, y: 0 }}
+            listening={false}
+          />
+          
+          {/* Canvas border - clear boundary */}
+          <Rect
+            x={0}
+            y={0}
+            width={canvasSize}
+            height={canvasSize}
+            stroke="#CCCCCC"
+            strokeWidth={2}
+            listening={false}
+          />
+          
+          {/* Grid lines within canvas bounds */}
+          {(() => {
+            const lines = [];
+            const gridSize = 50; // 50px grid
+            
+            // Vertical lines
+            for (let i = 0; i <= canvasSize; i += gridSize) {
+              lines.push(
+                <Line
+                  key={`v-${i}`}
+                  points={[i, 0, i, canvasSize]}
+                  stroke="#E8E8E8"
+                  strokeWidth={1}
+                  listening={false}
+                />
+              );
+            }
+            
+            // Horizontal lines
+            for (let i = 0; i <= canvasSize; i += gridSize) {
+              lines.push(
+                <Line
+                  key={`h-${i}`}
+                  points={[0, i, canvasSize, i]}
+                  stroke="#E8E8E8"
+                  strokeWidth={1}
+                  listening={false}
+                />
+              );
+            }
+            
+            return lines;
+          })()}
+        </Layer>
+
         {/* Shapes layer */}
         <Layer>
           {shapes.map((shape) => {
@@ -589,7 +714,7 @@ const Canvas = () => {
             return null;
           })}
           
-          {/* Transformer for resize handles */}
+          {/* Transformer for resize and rotate handles */}
           <Transformer
             ref={transformerRef}
             enabledAnchors={[
@@ -602,7 +727,7 @@ const Canvas = () => {
               'top-center',
               'bottom-center',
             ]}
-            rotateEnabled={false}
+            rotateEnabled={true}
             borderStroke="#0066FF"
             borderStrokeWidth={2}
             anchorStroke="#0066FF"
