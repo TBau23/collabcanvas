@@ -67,17 +67,35 @@ const AIModal = ({ isOpen, onClose, currentShapes }) => {
       const result = await sendCommand(userMessage, user.uid, currentShapes);
 
       if (result.success) {
+        // Show progress for large operations
+        const toolCallCount = result.toolCalls?.length || 0;
+        const isLargeOperation = toolCallCount >= 10;
+        
         // Format the response message
         let responseContent = result.aiResponse;
         
         // Add tool execution details if available
         if (result.toolCalls && result.toolCalls.length > 0) {
-          const executionSummary = result.toolCalls
-            .map(tc => tc.result.message)
-            .join('\n');
-          
-          if (!responseContent || responseContent === 'Done!') {
-            responseContent = `✓ ${executionSummary}`;
+          // For large operations, show a summary instead of all details
+          if (isLargeOperation) {
+            const createCount = result.toolCalls.filter(tc => 
+              tc.toolCall === 'createShape' || tc.toolCall === 'createMultipleShapes'
+            ).length;
+            
+            if (createCount > 0) {
+              responseContent = `✓ Created ${toolCallCount} shapes successfully!`;
+            } else {
+              responseContent = `✓ Completed ${toolCallCount} operations successfully!`;
+            }
+          } else {
+            // For smaller operations, show details
+            const executionSummary = result.toolCalls
+              .map(tc => tc.result.message)
+              .join('\n');
+            
+            if (!responseContent || responseContent === 'Done!') {
+              responseContent = `✓ ${executionSummary}`;
+            }
           }
         }
 

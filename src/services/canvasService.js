@@ -29,20 +29,18 @@ export const createShape = async (userId, shapeData) => {
  */
 export const updateShape = async (userId, shapeId, updates) => {
   try {
-    console.log('[canvasService] updateShape called:', { userId, shapeId, updates });
     const shapeRef = doc(db, 'canvases', CANVAS_ID, 'objects', shapeId);
     const updateData = {
       ...updates,
       updatedBy: userId,
       updatedAt: Date.now(),
     };
-    console.log('[canvasService] Writing to Firestore:', updateData);
     await setDoc(
       shapeRef,
       updateData,
       { merge: true }
     );
-    console.log('[canvasService] updateShape successful');
+
   } catch (error) {
     console.error('Error updating shape:', error);
     throw error;

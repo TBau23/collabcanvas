@@ -22,8 +22,18 @@ Your capabilities:
 1. Create shapes with specific positions, sizes, and colors using createShape
 2. Update existing shapes (move, resize, recolor, rotate) using updateShape
 3. Get current canvas state to reference existing shapes using getCanvasState
-4. Create multiple shapes for complex layouts using createMultipleShapes
+4. Create multiple shapes for complex layouts using createMultipleShapes ⭐
 5. Delete shapes using deleteShape
+
+CRITICAL PERFORMANCE RULE:
+⚡ For 3+ shapes in ONE command, ALWAYS use createMultipleShapes (not multiple createShape calls)
+⚡ This applies to: grids, patterns, forms, layouts, UI components, repeated elements
+⚡ Examples requiring createMultipleShapes:
+  • "Create a 5x5 grid of squares" → ONE createMultipleShapes call with 25 shapes
+  • "Make a login form" → ONE createMultipleShapes call with all form elements  
+  • "Add 10 circles in a row" → ONE createMultipleShapes call with 10 circles
+  • "Create a navbar with 5 buttons" → ONE createMultipleShapes call
+⚡ Only use individual createShape for truly isolated, single shapes
 
 Guidelines:
 - Use reasonable default sizes if not specified: 150x100 for rectangles, 100x100 for ellipses, 200x50 for text
@@ -165,7 +175,7 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'createMultipleShapes',
-      description: 'Create multiple shapes at once (for complex layouts like forms, navbars, grids)',
+      description: 'Create multiple shapes at once in a single optimized operation. REQUIRED for 3+ shapes in one command. Use for: grids, patterns, forms, navbars, UI layouts, repeated elements.',
       parameters: {
         type: 'object',
         properties: {
@@ -196,6 +206,14 @@ const TOOL_DEFINITIONS = [
                 },
                 rotation: {
                   type: 'number'
+                },
+                text: {
+                  type: 'string',
+                  description: 'Text content (required for text type shapes)'
+                },
+                fontSize: {
+                  type: 'number',
+                  description: 'Font size in pixels (optional for text type, default 24)'
                 }
               },
               required: ['type', 'x', 'y', 'width', 'height', 'fill']
@@ -291,10 +309,12 @@ const executeTool = async (toolCall, userId, currentShapes) => {
       }
 
       case 'getCanvasState': {
+        // Return optimized canvas state - only essential data
+        const optimizedShapes = optimizeCanvasState(currentShapes);
         return {
           success: true,
           message: `Retrieved ${currentShapes.length} shapes`,
-          data: currentShapes
+          data: optimizedShapes
         };
       }
 
@@ -356,6 +376,46 @@ const executeTool = async (toolCall, userId, currentShapes) => {
 };
 
 /**
+ * Determine if the command needs canvas state context
+ * @param {string} message - User's command
+ * @returns {boolean} Whether canvas state is needed
+ */
+const needsCanvasState = (message) => {
+  const lowerMessage = message.toLowerCase();
+  
+  // Commands that reference existing shapes
+  const referenceKeywords = [
+    'move', 'delete', 'update', 'change', 'modify', 'resize', 'rotate',
+    'the ', 'that ', 'this ', 'those ', 'these ',
+    'all ', 'every ', 'each ',
+    'blue', 'red', 'green', 'yellow', 'orange', 'purple', 'pink', // color references
+    'rectangle', 'circle', 'ellipse', 'text', 'shape' // shape type references
+  ];
+  
+  return referenceKeywords.some(keyword => lowerMessage.includes(keyword));
+};
+
+/**
+ * Filter and optimize canvas state for AI context
+ * Only send essential shape data to reduce payload size and token usage
+ * @param {Array} shapes - All canvas shapes
+ * @returns {Array} Filtered shape data
+ */
+const optimizeCanvasState = (shapes) => {
+  if (!shapes || shapes.length === 0) return [];
+  
+  // Send only essential data - omit detailed properties
+  return shapes.map(shape => ({
+    id: shape.id,
+    type: shape.type,
+    x: Math.round(shape.x),
+    y: Math.round(shape.y),
+    fill: shape.fill,
+    ...(shape.type === 'text' && shape.text && { text: shape.text.substring(0, 50) }) // Truncate long text
+  }));
+};
+
+/**
  * Send a command to the AI and execute the resulting actions
  * @param {string} message - User's natural language command
  * @param {string} userId - User ID
@@ -364,27 +424,47 @@ const executeTool = async (toolCall, userId, currentShapes) => {
  */
 export const sendCommand = async (message, userId, currentShapes = []) => {
   try {
+    // Optimize payload: only send canvas state if command references existing shapes
+    const shouldSendCanvasState = needsCanvasState(message);
+    const optimizedCanvasState = shouldSendCanvasState 
+      ? optimizeCanvasState(currentShapes)
+      : [];
+    
+    if (shouldSendCanvasState) {
+      console.log(`[AI] Sending ${optimizedCanvasState.length} shapes as context`);
+    } else {
+      console.log('[AI] Command does not need canvas state - optimizing payload');
+    }
+    
     // Call the Cloud Function with the user's message
     const result = await callAIFunction({
       message,
-      canvasState: currentShapes,
+      canvasState: optimizedCanvasState,
       systemPrompt: SYSTEM_PROMPT,
       tools: TOOL_DEFINITIONS
     });
 
     const { message: aiMessage, usage } = result.data;
 
-    // If the AI returned tool calls, execute them
-    const toolResults = [];
+    // If the AI returned tool calls, execute them in parallel for maximum performance
+    let toolResults = [];
     if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-      for (const toolCall of aiMessage.tool_calls) {
-        const result = await executeTool(toolCall, userId, currentShapes);
-        toolResults.push({
-          toolCall: toolCall.function.name,
-          arguments: JSON.parse(toolCall.function.arguments),
-          result
-        });
-      }
+      console.log(`[AI] Executing ${aiMessage.tool_calls.length} tool calls in parallel`);
+      
+      // Execute all tool calls in parallel using Promise.all
+      // This dramatically improves performance for multi-shape operations
+      toolResults = await Promise.all(
+        aiMessage.tool_calls.map(async (toolCall) => {
+          const result = await executeTool(toolCall, userId, currentShapes);
+          return {
+            toolCall: toolCall.function.name,
+            arguments: JSON.parse(toolCall.function.arguments),
+            result
+          };
+        })
+      );
+      
+      console.log(`[AI] Completed ${toolResults.length} tool calls`);
     }
 
     return {
