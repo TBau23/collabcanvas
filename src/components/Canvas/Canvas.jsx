@@ -1,9 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Stage, Layer, Circle, Text, Rect, Ellipse, Transformer, Line } from 'react-konva';
 import { useAuth } from '../../context/AuthContext';
-import { updateCursor, subscribeToCursors, deleteCursor } from '../../services/cursorService';
 import { createShape, updateShape, deleteShape, subscribeToShapes } from '../../services/canvasService';
-import { setUserOnline, subscribeToPresence, setUserOffline } from '../../services/presenceService';
+import { 
+  updateCursorRTDB, 
+  subscribeToCursorsRTDB, 
+  deleteCursorRTDB, 
+  setupCursorCleanup,
+  setUserOnlineRTDB, 
+  subscribeToPresenceRTDB, 
+  setUserOfflineRTDB 
+} from '../../services/rtdbService';
 import CanvasToolbar from './CanvasToolbar';
 import PresencePanel from '../Presence/PresencePanel';
 import AIButton from '../AI/AIButton';
@@ -66,7 +73,10 @@ const Canvas = () => {
   useEffect(() => {
     if (!user) return;
 
-    const unsubscribe = subscribeToCursors((remoteCursors) => {
+    // Setup automatic cursor cleanup on disconnect
+    setupCursorCleanup(user.uid);
+
+    const unsubscribe = subscribeToCursorsRTDB((remoteCursors) => {
       const otherCursors = remoteCursors.filter((c) => c.userId !== user.uid);
       setCursors(otherCursors);
     });
@@ -129,31 +139,25 @@ const Canvas = () => {
   useEffect(() => {
     if (!user) return;
 
-    const unsubscribe = subscribeToPresence((users) => {
+    const unsubscribe = subscribeToPresenceRTDB((users) => {
       setOnlineUsers(users);
     });
 
     return unsubscribe;
   }, [user]);
 
-  // Initialize presence and set up heartbeat
+  // Initialize presence (no heartbeat needed - onDisconnect handles it)
   useEffect(() => {
     if (!user) return;
 
     const userName = user.displayName || user.email;
 
-    // Set user online immediately
-    setUserOnline(user.uid, userName);
-
-    // Set up heartbeat to keep presence alive (every 5 seconds for quicker updates)
-    const heartbeatInterval = setInterval(() => {
-      setUserOnline(user.uid, userName);
-    }, 2000);
+    // Set user online immediately (onDisconnect is setup in the service)
+    setUserOnlineRTDB(user.uid, userName);
 
     // Cleanup on unmount
     return () => {
-      clearInterval(heartbeatInterval);
-      setUserOffline(user.uid);
+      setUserOfflineRTDB(user.uid);
     };
   }, [user]);
 
@@ -214,8 +218,8 @@ const Canvas = () => {
     if (!user) return;
 
     const handleBeforeUnload = () => {
-      deleteCursor(user.uid);
-      setUserOffline(user.uid);
+      deleteCursorRTDB(user.uid);
+      setUserOfflineRTDB(user.uid);
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -230,10 +234,14 @@ const Canvas = () => {
     if (!user) return;
 
     const stage = e.target.getStage();
-    const pos = stage.getPointerPosition();
+    const pointerPos = stage.getPointerPosition();
     
-    if (pos) {
-      updateCursor(user.uid, user.displayName || user.email, pos.x, pos.y);
+    if (pointerPos) {
+      // Transform viewport coordinates to canvas coordinates
+      const transform = stage.getAbsoluteTransform().copy().invert();
+      const canvasPos = transform.point(pointerPos);
+      
+      updateCursorRTDB(user.uid, user.displayName || user.email, canvasPos.x, canvasPos.y);
     }
   };
 

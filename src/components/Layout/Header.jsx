@@ -1,4 +1,5 @@
 import { useAuth } from '../../context/AuthContext';
+import ConnectionIndicator from '../Connection/ConnectionIndicator';
 import './Header.css';
 
 const Header = () => {
@@ -17,6 +18,7 @@ const Header = () => {
       <div className="header-content">
         <h1 className="logo">CollabCanvas</h1>
         <div className="header-right">
+          <ConnectionIndicator />
           <span className="user-name">
             {user?.displayName || user?.email}
           </span>
