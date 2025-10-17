@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Stage, Layer, Circle, Text, Rect, Ellipse, Transformer, Line } from 'react-konva';
+import { Stage, Layer, Circle, Text, Rect, Ellipse, Transformer, Line, Shape } from 'react-konva';
 import { useAuth } from '../../context/AuthContext';
 import { createShape, updateShape, deleteShape, subscribeToShapes } from '../../services/canvasService';
 import { 
@@ -37,6 +37,7 @@ const Canvas = () => {
   const [currentColor, setCurrentColor] = useState('#4A90E2');
   const [shapes, setShapes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
   
   // Pan and zoom state - initialize to center of canvas
   const canvasSize = 5000;
@@ -55,6 +56,58 @@ const Canvas = () => {
   const [editingText, setEditingText] = useState(null);
   const [textEditorValue, setTextEditorValue] = useState('');
   const [textEditorPosition, setTextEditorPosition] = useState({ x: 0, y: 0, width: 200 });
+
+  // Viewport culling helper - only render shapes in view (plus selected/dragging)
+  const getVisibleShapes = (shapes, selectedId, isDragging) => {
+    if (!stageRef.current) return shapes;
+    
+    const stage = stageRef.current;
+    
+    // Calculate viewport bounds in canvas coordinates
+    const viewport = {
+      x: -stage.x() / stage.scaleX(),
+      y: -stage.y() / stage.scaleY(),
+      width: stage.width() / stage.scaleX(),
+      height: stage.height() / stage.scaleY(),
+    };
+    
+    // Add margin for smooth scrolling (shapes appear before entering viewport)
+    const margin = 200;
+    
+    const visibleShapes = shapes.filter(shape => {
+      // ALWAYS render selected shape (critical for Transformer)
+      if (shape.id === selectedId) return true;
+      
+      // ALWAYS render shape being dragged
+      if (isDragging && shape.id === selectedId) return true;
+      
+      // Get shape bounds (handle text shapes with no initial width/height)
+      const shapeWidth = shape.width || 200;
+      const shapeHeight = shape.height || 50;
+      
+      const shapeLeft = shape.x;
+      const shapeRight = shape.x + shapeWidth;
+      const shapeTop = shape.y;
+      const shapeBottom = shape.y + shapeHeight;
+      
+      // Check if shape intersects viewport (with margin)
+      const isVisible = !(
+        shapeRight < viewport.x - margin ||
+        shapeLeft > viewport.x + viewport.width + margin ||
+        shapeBottom < viewport.y - margin ||
+        shapeTop > viewport.y + viewport.height + margin
+      );
+      
+      return isVisible;
+    });
+    
+    // Log culling stats occasionally for debugging (remove in production)
+    if (shapes.length > 100 && Math.random() < 0.02) { // Log 2% of frames when many shapes
+      console.log(`[Viewport Culling] ${visibleShapes.length}/${shapes.length} visible (${Math.round((1 - visibleShapes.length / shapes.length) * 100)}% culled)`);
+    }
+    
+    return visibleShapes;
+  };
 
   // Handle window resize
   useEffect(() => {
@@ -371,10 +424,13 @@ const Canvas = () => {
   const handleShapeDragStart = (e) => {
     // Prevent panning when dragging a shape
     isPanning.current = false;
+    setIsDragging(true);
   };
 
   // Handle shape drag end
   const handleShapeDragEnd = (shapeId, e) => {
+    setIsDragging(false);
+    
     const newX = e.target.x();
     const newY = e.target.y();
 
@@ -626,44 +682,35 @@ const Canvas = () => {
             listening={false}
           />
           
-          {/* Grid lines within canvas bounds */}
-          {(() => {
-            const lines = [];
-            const gridSize = 50; // 50px grid
-            
-            // Vertical lines
-            for (let i = 0; i <= canvasSize; i += gridSize) {
-              lines.push(
-                <Line
-                  key={`v-${i}`}
-                  points={[i, 0, i, canvasSize]}
-                  stroke="#E8E8E8"
-                  strokeWidth={1}
-                  listening={false}
-                />
-              );
-            }
-            
-            // Horizontal lines
-            for (let i = 0; i <= canvasSize; i += gridSize) {
-              lines.push(
-                <Line
-                  key={`h-${i}`}
-                  points={[0, i, canvasSize, i]}
-                  stroke="#E8E8E8"
-                  strokeWidth={1}
-                  listening={false}
-                />
-              );
-            }
-            
-            return lines;
-          })()}
+          {/* Grid lines - optimized single shape instead of 200 components */}
+          <Shape
+            sceneFunc={(context, shape) => {
+              const gridSize = 50;
+              context.strokeStyle = '#E8E8E8';
+              context.lineWidth = 1;
+              context.beginPath();
+              
+              // Vertical lines
+              for (let i = 0; i <= canvasSize; i += gridSize) {
+                context.moveTo(i, 0);
+                context.lineTo(i, canvasSize);
+              }
+              
+              // Horizontal lines
+              for (let i = 0; i <= canvasSize; i += gridSize) {
+                context.moveTo(0, i);
+                context.lineTo(canvasSize, i);
+              }
+              
+              context.stroke();
+            }}
+            listening={false}
+          />
         </Layer>
 
         {/* Shapes layer */}
         <Layer>
-          {shapes.map((shape) => {
+          {getVisibleShapes(shapes, selectedId, isDragging).map((shape) => {
             const isSelected = selectedId === shape.id;
             const commonProps = {
               ref: (node) => {
