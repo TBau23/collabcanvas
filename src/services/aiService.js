@@ -1,6 +1,9 @@
 import { httpsCallable } from 'firebase/functions';
-import { functions } from './firebase';
+import { functions, db } from './firebase';
 import { createShape, updateShape, deleteShape } from './canvasService';
+import { doc, writeBatch } from 'firebase/firestore';
+
+const CANVAS_ID = 'main-canvas';
 
 // Initialize callable function
 const callAIFunction = httpsCallable(functions, 'callAI');
@@ -296,7 +299,10 @@ const executeTool = async (toolCall, userId, currentShapes) => {
       }
 
       case 'createMultipleShapes': {
+        // Use batch writes for atomic, faster multi-shape creation
+        const batch = writeBatch(db);
         const createdShapes = [];
+        
         for (const shape of args.shapes) {
           const shapeId = generateShapeId();
           const shapeData = {
@@ -308,15 +314,25 @@ const executeTool = async (toolCall, userId, currentShapes) => {
             height: shape.height,
             fill: shape.fill,
             rotation: shape.rotation || 0,
+            updatedBy: userId,
+            updatedAt: Date.now(),
             ...(shape.type === 'text' && {
               text: shape.text || 'Text',
               fontSize: shape.fontSize || 24,
               fontFamily: 'Arial'
             })
           };
-          await createShape(userId, shapeData);
+          
+          // Add to batch instead of individual write
+          const shapeRef = doc(db, 'canvases', CANVAS_ID, 'objects', shapeId);
+          batch.set(shapeRef, shapeData);
+          
           createdShapes.push(shapeData);
         }
+        
+        // Commit all writes in single transaction
+        await batch.commit();
+        
         return {
           success: true,
           message: `Created ${createdShapes.length} shapes`,

@@ -3,7 +3,9 @@ import { ref, set, remove, onValue, onDisconnect } from 'firebase/database';
 
 const CANVAS_ID = 'main-canvas';
 const CURSOR_THROTTLE_MS = 50; // Reduced from 100ms for lower latency
+const DRAG_THROTTLE_MS = 50; // Same as cursor for smooth dragging
 let lastCursorUpdate = 0;
+let lastDragUpdate = 0;
 
 /**
  * Hash userId to a consistent color
@@ -101,6 +103,114 @@ export const deleteCursorRTDB = async (userId) => {
     await remove(cursorRef);
   } catch (error) {
     console.error('Error deleting cursor:', error);
+  }
+};
+
+// ============================================
+// LIVE DRAGGING OPERATIONS
+// ============================================
+
+/**
+ * Update shape position during drag (real-time sync)
+ * @param {string} userId - User ID
+ * @param {string} shapeId - Shape ID being dragged
+ * @param {number} x - X coordinate
+ * @param {number} y - Y coordinate
+ */
+export const updateDraggingPosition = async (userId, shapeId, x, y) => {
+  const now = Date.now();
+  
+  // Throttle updates
+  if (now - lastDragUpdate < DRAG_THROTTLE_MS) return;
+  lastDragUpdate = now;
+  
+  try {
+    const dragRef = ref(rtdb, `sessions/${CANVAS_ID}/dragging/${shapeId}`);
+    await set(dragRef, {
+      userId,
+      x,
+      y,
+      updatedAt: now,
+    });
+  } catch (error) {
+    console.error('Error updating drag position:', error);
+  }
+};
+
+/**
+ * Update shape transform during resize/rotate (real-time sync)
+ * @param {string} userId - User ID
+ * @param {string} shapeId - Shape ID being transformed
+ * @param {object} transform - { x, y, width, height, rotation }
+ */
+export const updateTransformState = async (userId, shapeId, transform) => {
+  const now = Date.now();
+  
+  // Throttle updates (same as drag)
+  if (now - lastDragUpdate < DRAG_THROTTLE_MS) return;
+  lastDragUpdate = now;
+  
+  try {
+    const transformRef = ref(rtdb, `sessions/${CANVAS_ID}/dragging/${shapeId}`);
+    await set(transformRef, {
+      userId,
+      ...transform,
+      updatedAt: now,
+    });
+  } catch (error) {
+    console.error('Error updating transform state:', error);
+  }
+};
+
+/**
+ * Subscribe to live dragging updates
+ * @param {Function} callback - Called with object { shapeId, userId, x, y }
+ * @returns {Function} Unsubscribe function
+ */
+export const subscribeToDragging = (callback) => {
+  const draggingRef = ref(rtdb, `sessions/${CANVAS_ID}/dragging`);
+  
+  return onValue(draggingRef, (snapshot) => {
+    const draggingShapes = [];
+    
+    if (snapshot.exists()) {
+      snapshot.forEach((childSnapshot) => {
+        draggingShapes.push({
+          shapeId: childSnapshot.key,
+          ...childSnapshot.val()
+        });
+      });
+    }
+    
+    callback(draggingShapes);
+  }, (error) => {
+    console.error('Error subscribing to dragging:', error);
+  });
+};
+
+/**
+ * Clear dragging state for a shape (on drag end)
+ * @param {string} shapeId - Shape ID
+ */
+export const clearDraggingPosition = async (shapeId) => {
+  try {
+    const dragRef = ref(rtdb, `sessions/${CANVAS_ID}/dragging/${shapeId}`);
+    await remove(dragRef);
+  } catch (error) {
+    console.error('Error clearing drag position:', error);
+  }
+};
+
+/**
+ * Setup automatic cleanup of dragging state on disconnect
+ * @param {string} shapeId - Shape ID being dragged
+ */
+export const setupDraggingCleanup = (shapeId) => {
+  try {
+    const dragRef = ref(rtdb, `sessions/${CANVAS_ID}/dragging/${shapeId}`);
+    onDisconnect(dragRef).remove();
+  } catch (error) {
+    console.error('Error setting up dragging cleanup:', error);
   }
 };
 

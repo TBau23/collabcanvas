@@ -9,7 +9,12 @@ import {
   setupCursorCleanup,
   setUserOnlineRTDB, 
   subscribeToPresenceRTDB, 
-  setUserOfflineRTDB 
+  setUserOfflineRTDB,
+  updateDraggingPosition,
+  subscribeToDragging,
+  clearDraggingPosition,
+  setupDraggingCleanup,
+  updateTransformState
 } from '../../services/rtdbService';
 import CanvasToolbar from './CanvasToolbar';
 import PresencePanel from '../Presence/PresencePanel';
@@ -27,6 +32,7 @@ const Canvas = () => {
   // Canvas state
   const [cursors, setCursors] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState([]);
+  const [remoteDragging, setRemoteDragging] = useState([]); // Track shapes being dragged by others
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
     height: window.innerHeight - 60,
@@ -38,6 +44,7 @@ const Canvas = () => {
   const [shapes, setShapes] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isTransforming, setIsTransforming] = useState(false);
   
   // Pan and zoom state - initialize to center of canvas
   const canvasSize = 5000;
@@ -57,8 +64,8 @@ const Canvas = () => {
   const [textEditorValue, setTextEditorValue] = useState('');
   const [textEditorPosition, setTextEditorPosition] = useState({ x: 0, y: 0, width: 200 });
 
-  // Viewport culling helper - only render shapes in view (plus selected/dragging)
-  const getVisibleShapes = (shapes, selectedId, isDragging) => {
+  // Viewport culling helper - only render shapes in view (plus selected/dragging/transforming)
+  const getVisibleShapes = (shapes, selectedId, isDragging, isTransforming) => {
     if (!stageRef.current) return shapes;
     
     const stage = stageRef.current;
@@ -78,8 +85,8 @@ const Canvas = () => {
       // ALWAYS render selected shape (critical for Transformer)
       if (shape.id === selectedId) return true;
       
-      // ALWAYS render shape being dragged
-      if (isDragging && shape.id === selectedId) return true;
+      // ALWAYS render shape being dragged or transformed
+      if ((isDragging || isTransforming) && shape.id === selectedId) return true;
       
       // Get shape bounds (handle text shapes with no initial width/height)
       const shapeWidth = shape.width || 200;
@@ -194,6 +201,19 @@ const Canvas = () => {
 
     const unsubscribe = subscribeToPresenceRTDB((users) => {
       setOnlineUsers(users);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  // Subscribe to live dragging updates
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = subscribeToDragging((draggingShapes) => {
+      // Filter out our own drags
+      const otherDrags = draggingShapes.filter(drag => drag.userId !== user.uid);
+      setRemoteDragging(otherDrags);
     });
 
     return unsubscribe;
@@ -421,18 +441,62 @@ const Canvas = () => {
   };
 
   // Handle shape drag start
-  const handleShapeDragStart = (e) => {
+  const handleShapeDragStart = (e, shapeId) => {
     // Prevent panning when dragging a shape
     isPanning.current = false;
     setIsDragging(true);
+    
+    // Setup automatic cleanup on disconnect
+    setupDraggingCleanup(shapeId);
+  };
+
+  // Handle shape drag move (real-time position sync)
+  const handleShapeDragMove = (shapeId, e) => {
+    const node = e.target;
+    const stage = node.getStage();
+    
+    // Get shape data
+    const shape = shapes.find(s => s.id === shapeId);
+    if (!shape) return;
+    
+    // Convert shape center to stage coordinates for cursor
+    const stagePos = stage.getPointerPosition();
+    if (stagePos) {
+      // Transform to canvas coordinates
+      const transform = stage.getAbsoluteTransform().copy().invert();
+      const canvasPos = transform.point(stagePos);
+      
+      // Update cursor to follow pointer during drag
+      updateCursorRTDB(user.uid, user.displayName || user.email, canvasPos.x, canvasPos.y);
+    }
+    
+    // Send real-time position update with full transform data
+    // (so shape doesn't disappear on other screens)
+    updateTransformState(user.uid, shapeId, {
+      x: node.x(),
+      y: node.y(),
+      width: shape.width || 200,
+      height: shape.height || 50,
+      rotation: shape.rotation || 0,
+    });
   };
 
   // Handle shape drag end
   const handleShapeDragEnd = (shapeId, e) => {
     setIsDragging(false);
     
-    const newX = e.target.x();
-    const newY = e.target.y();
+    const node = e.target;
+    const stage = node.getStage();
+    const newX = node.x();
+    const newY = node.y();
+
+    // Update cursor position at drop point
+    const stagePos = stage.getPointerPosition();
+    if (stagePos) {
+      const transform = stage.getAbsoluteTransform().copy().invert();
+      const canvasPos = transform.point(stagePos);
+      updateCursorRTDB(user.uid, user.displayName || user.email, canvasPos.x, canvasPos.y);
+    }
 
     // Optimistic update: Update local state immediately
     const newShapes = shapes.map((shape) => {
@@ -449,12 +513,44 @@ const Canvas = () => {
     });
     setShapes(newShapes);
 
-    // Save to Firestore
+    // Save to Firestore (persists final position)
     updateShape(user.uid, shapeId, { x: newX, y: newY });
+
+    // Clear live dragging state AFTER a delay to prevent flicker
+    // This gives Firestore time to propagate the final position
+    setTimeout(() => {
+      clearDraggingPosition(shapeId);
+    }, 300); // 300ms delay matches typical Firestore propagation
   };
 
-  // Handle shape transform (resize)
-  const handleShapeTransform = (shapeId, node) => {
+  // Handle shape transform start
+  const handleShapeTransformStart = (shapeId) => {
+    setIsTransforming(true);
+    setupDraggingCleanup(shapeId); // Reuse dragging cleanup
+  };
+
+  // Handle shape transform (resize/rotate) - real-time sync
+  const handleShapeTransformMove = (shapeId, node) => {
+    const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
+    
+    const newWidth = Math.max(20, node.width() * scaleX);
+    const newHeight = Math.max(20, node.height() * scaleY);
+    
+    // Send real-time transform update
+    updateTransformState(user.uid, shapeId, {
+      x: node.x(),
+      y: node.y(),
+      width: Math.min(2000, newWidth),
+      height: Math.min(2000, newHeight),
+      rotation: node.rotation(),
+    });
+  };
+
+  // Handle shape transform end
+  const handleShapeTransformEnd = (shapeId, node) => {
+    setIsTransforming(false);
+    
     // Get the new dimensions
     const scaleX = node.scaleX();
     const scaleY = node.scaleY();
@@ -488,7 +584,7 @@ const Canvas = () => {
     });
     setShapes(newShapes);
 
-    // Save to Firestore
+    // Save to Firestore (persists final state)
     updateShape(user.uid, shapeId, {
       x: node.x(),
       y: node.y(),
@@ -496,6 +592,11 @@ const Canvas = () => {
       height: constrainedHeight,
       rotation: node.rotation(),
     });
+
+    // Clear transform state after delay (prevent flicker)
+    setTimeout(() => {
+      clearDraggingPosition(shapeId);
+    }, 300);
   };
 
   // Handle tool change
@@ -710,25 +811,41 @@ const Canvas = () => {
 
         {/* Shapes layer */}
         <Layer>
-          {getVisibleShapes(shapes, selectedId, isDragging).map((shape) => {
+          {getVisibleShapes(shapes, selectedId, isDragging, isTransforming).map((shape) => {
             const isSelected = selectedId === shape.id;
+            
+            // Check if this shape is being dragged/transformed by another user
+            const remoteTransform = remoteDragging.find(drag => drag.shapeId === shape.id);
+            
+            // Use remote transform data if available, otherwise use shape's data
+            // Handle partial transform data gracefully
+            const displayX = remoteTransform?.x ?? shape.x;
+            const displayY = remoteTransform?.y ?? shape.y;
+            const displayWidth = remoteTransform?.width ?? shape.width;
+            const displayHeight = remoteTransform?.height ?? shape.height;
+            const displayRotation = remoteTransform?.rotation ?? shape.rotation;
+            
             const commonProps = {
               ref: (node) => {
                 if (node) {
                   shapeRefs.current[shape.id] = node;
                 }
               },
-              x: shape.x,
-              y: shape.y,
+              x: displayX,
+              y: displayY,
               fill: shape.fill,
-              rotation: shape.rotation,
+              rotation: displayRotation,
               draggable: currentTool === 'select',
               onClick: (e) => handleShapeClick(e, shape.id),
-              onDragStart: handleShapeDragStart,
+              onDragStart: (e) => handleShapeDragStart(e, shape.id),
+              onDragMove: (e) => handleShapeDragMove(shape.id, e),
               onDragEnd: (e) => handleShapeDragEnd(shape.id, e),
-              onTransformEnd: (e) => handleShapeTransform(shape.id, e.target),
-              stroke: isSelected ? '#0066FF' : undefined,
-              strokeWidth: isSelected ? 3 : 0,
+              onTransformStart: () => handleShapeTransformStart(shape.id),
+              onTransform: (e) => handleShapeTransformMove(shape.id, e.target),
+              onTransformEnd: (e) => handleShapeTransformEnd(shape.id, e.target),
+              stroke: isSelected ? '#0066FF' : (remoteTransform ? '#FFA500' : undefined),
+              strokeWidth: isSelected ? 3 : (remoteTransform ? 2 : 0),
+              opacity: remoteTransform ? 0.7 : 1,
             };
 
             if (shape.type === 'rectangle') {
@@ -736,8 +853,8 @@ const Canvas = () => {
                 <Rect
                   key={shape.id}
                   {...commonProps}
-                  width={shape.width}
-                  height={shape.height}
+                  width={displayWidth}
+                  height={displayHeight}
                 />
               );
             } else if (shape.type === 'ellipse') {
@@ -745,10 +862,10 @@ const Canvas = () => {
                 <Ellipse
                   key={shape.id}
                   {...commonProps}
-                  radiusX={shape.width / 2}
-                  radiusY={shape.height / 2}
-                  offsetX={-shape.width / 2}
-                  offsetY={-shape.height / 2}
+                  radiusX={displayWidth / 2}
+                  radiusY={displayHeight / 2}
+                  offsetX={-displayWidth / 2}
+                  offsetY={-displayHeight / 2}
                 />
               );
             } else if (shape.type === 'text') {
@@ -759,8 +876,8 @@ const Canvas = () => {
                   text={shape.text || 'Text'}
                   fontSize={shape.fontSize || 24}
                   fontFamily={shape.fontFamily || 'Arial'}
-                  width={shape.width}
-                  height={shape.height}
+                  width={displayWidth}
+                  height={displayHeight}
                   visible={editingText !== shape.id}
                   onDblClick={() => handleTextEdit(shape)}
                 />
