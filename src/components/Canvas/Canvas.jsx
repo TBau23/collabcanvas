@@ -157,15 +157,8 @@ const Canvas = () => {
           currentShapes.map((shape) => [shape.id, shape])
         );
 
-        // Get remote shape IDs
-        const remoteShapeIds = new Set(remoteShapes.map(s => s.id));
-
-        // Remove shapes that don't exist remotely (deleted by other users)
-        const existingShapes = currentShapes.filter(shape => 
-          remoteShapeIds.has(shape.id) || shape.updatedBy === user.uid
-        );
-
-        // Merge remote shapes with local shapes
+        // Trust Firestore as source of truth - only keep shapes that exist remotely
+        // Real-time position updates during drag/transform are handled by RTDB
         const mergedShapes = remoteShapes.map((remoteShape) => {
           const localShape = currentShapesMap.get(remoteShape.id);
 
@@ -174,8 +167,8 @@ const Canvas = () => {
             return remoteShape;
           }
 
-          // If remote shape is newer, use it (even if from same user - handles AI updates)
-          // Otherwise keep local version (for optimistic updates during drag)
+          // If remote shape is newer, use it
+          // Otherwise keep local version (for optimistic updates that haven't synced yet)
           if (remoteShape.updatedAt > (localShape.updatedAt || 0)) {
             return remoteShape;
           }
@@ -183,12 +176,7 @@ const Canvas = () => {
           return localShape;
         });
 
-        // Combine existing local shapes with merged remote shapes
-        const localOnlyShapes = existingShapes.filter(shape => 
-          !remoteShapeIds.has(shape.id) && shape.updatedBy === user.uid
-        );
-
-        return [...mergedShapes, ...localOnlyShapes];
+        return mergedShapes;
       });
     });
 
