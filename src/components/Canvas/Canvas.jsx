@@ -14,7 +14,12 @@ import {
   subscribeToDragging,
   clearDraggingPosition,
   setupDraggingCleanup,
-  updateTransformState
+  updateTransformState,
+  updateSelection,
+  subscribeToSelections,
+  setupSelectionCleanup,
+  clearSelection,
+  subscribeToConnectionState
 } from '../../services/rtdbService';
 import CanvasToolbar from './CanvasToolbar';
 import PresencePanel from '../Presence/PresencePanel';
@@ -33,6 +38,7 @@ const Canvas = () => {
   const [cursors, setCursors] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [remoteDragging, setRemoteDragging] = useState([]); // Track shapes being dragged by others
+  const [remoteSelections, setRemoteSelections] = useState([]); // Track shapes selected by others
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
     height: window.innerHeight - 60,
@@ -133,7 +139,7 @@ const Canvas = () => {
   useEffect(() => {
     if (!user) return;
 
-    // Setup automatic cursor cleanup on disconnect
+    // Setup automatic cursor cleanup on disconnect (waits for connection internally)
     setupCursorCleanup(user.uid);
 
     const unsubscribe = subscribeToCursorsRTDB((remoteCursors) => {
@@ -207,17 +213,47 @@ const Canvas = () => {
     return unsubscribe;
   }, [user]);
 
-  // Initialize presence (no heartbeat needed - onDisconnect handles it)
+  // Subscribe to remote selection updates
+  useEffect(() => {
+    if (!user) return;
+
+    // Setup automatic selection cleanup on disconnect (waits for connection internally)
+    setupSelectionCleanup(user.uid);
+
+    const unsubscribe = subscribeToSelections((selections) => {
+      // Filter out our own selection
+      const otherSelections = selections.filter(sel => sel.userId !== user.uid);
+      setRemoteSelections(otherSelections);
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  // Initialize presence and handle reconnection
   useEffect(() => {
     if (!user) return;
 
     const userName = user.displayName || user.email;
 
-    // Set user online immediately (onDisconnect is setup in the service)
+    // Set user online (waits for connection internally)
     setUserOnlineRTDB(user.uid, userName);
+
+    // Subscribe to connection state to handle reconnection
+    const unsubscribe = subscribeToConnectionState((connected) => {
+      if (connected) {
+        console.log('[Canvas] RTDB connected, re-registering presence and cleanup handlers');
+        // Re-register all onDisconnect handlers when reconnecting
+        setUserOnlineRTDB(user.uid, userName);
+        setupCursorCleanup(user.uid);
+        setupSelectionCleanup(user.uid);
+      } else {
+        console.log('[Canvas] RTDB disconnected');
+      }
+    });
 
     // Cleanup on unmount
     return () => {
+      unsubscribe();
       setUserOfflineRTDB(user.uid);
     };
   }, [user]);
@@ -237,6 +273,16 @@ const Canvas = () => {
       transformerRef.current.nodes([]);
     }
   }, [selectedId, shapes]);
+
+  // Broadcast selection state to other users
+  useEffect(() => {
+    if (!user) return;
+
+    const userName = user.displayName || user.email;
+    
+    // Update RTDB with current selection (or clear if null)
+    updateSelection(user.uid, userName, selectedId);
+  }, [selectedId, user]);
 
   // Handle keyboard shortcuts (Delete key and Cmd+K for AI)
   useEffect(() => {
@@ -274,13 +320,17 @@ const Canvas = () => {
     };
   }, [selectedId, shapes, editingText]);
 
-  // Clean up cursor and presence on window close/refresh
+  // Clean up cursor, presence, and selection on window close/refresh
   useEffect(() => {
     if (!user) return;
 
     const handleBeforeUnload = () => {
+      // Note: beforeunload is unreliable, especially on mobile
+      // The onDisconnect handlers in RTDB are the primary cleanup mechanism
+      // This is just a best-effort synchronous cleanup attempt
       deleteCursorRTDB(user.uid);
       setUserOfflineRTDB(user.uid);
+      clearSelection(user.uid);
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -805,6 +855,9 @@ const Canvas = () => {
             // Check if this shape is being dragged/transformed by another user
             const remoteTransform = remoteDragging.find(drag => drag.shapeId === shape.id);
             
+            // Check if this shape is selected by another user
+            const remoteSelection = remoteSelections.find(sel => sel.shapeId === shape.id);
+            
             // Use remote transform data if available, otherwise use shape's data
             // Handle partial transform data gracefully
             const displayX = remoteTransform?.x ?? shape.x;
@@ -812,6 +865,27 @@ const Canvas = () => {
             const displayWidth = remoteTransform?.width ?? shape.width;
             const displayHeight = remoteTransform?.height ?? shape.height;
             const displayRotation = remoteTransform?.rotation ?? shape.rotation;
+            
+            // Determine outline color and width based on selection/transform state
+            // Priority: Local selection > Remote transform > Remote selection
+            let outlineColor = undefined;
+            let outlineWidth = 0;
+            let shapeOpacity = 1;
+            
+            if (isSelected) {
+              // Local user has this shape selected
+              outlineColor = '#0066FF';
+              outlineWidth = 3;
+            } else if (remoteTransform) {
+              // Another user is actively dragging/transforming this shape
+              outlineColor = '#FFA500';
+              outlineWidth = 2;
+              shapeOpacity = 0.7;
+            } else if (remoteSelection) {
+              // Another user has this shape selected (not actively transforming)
+              outlineColor = remoteSelection.color;
+              outlineWidth = 3;
+            }
             
             const commonProps = {
               ref: (node) => {
@@ -831,9 +905,9 @@ const Canvas = () => {
               onTransformStart: () => handleShapeTransformStart(shape.id),
               onTransform: (e) => handleShapeTransformMove(shape.id, e.target),
               onTransformEnd: (e) => handleShapeTransformEnd(shape.id, e.target),
-              stroke: isSelected ? '#0066FF' : (remoteTransform ? '#FFA500' : undefined),
-              strokeWidth: isSelected ? 3 : (remoteTransform ? 2 : 0),
-              opacity: remoteTransform ? 0.7 : 1,
+              stroke: outlineColor,
+              strokeWidth: outlineWidth,
+              opacity: shapeOpacity,
             };
 
             if (shape.type === 'rectangle') {

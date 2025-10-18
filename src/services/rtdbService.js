@@ -7,6 +7,47 @@ const DRAG_THROTTLE_MS = 50; // Same as cursor for smooth dragging
 let lastCursorUpdate = 0;
 let lastDragUpdate = 0;
 
+// Connection state tracking
+let isConnected = false;
+let connectionListeners = [];
+
+// Initialize connection monitoring
+const connectedRef = ref(rtdb, '.info/connected');
+onValue(connectedRef, (snapshot) => {
+  isConnected = snapshot.val() === true;
+  console.log(`[RTDB] Connection state: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
+  
+  // Notify all listeners of connection state change
+  connectionListeners.forEach(callback => callback(isConnected));
+});
+
+/**
+ * Wait for RTDB connection to be established
+ * @returns {Promise<void>} Resolves when connected
+ */
+const waitForConnection = () => {
+  if (isConnected) {
+    return Promise.resolve();
+  }
+  
+  return new Promise((resolve) => {
+    const listener = (connected) => {
+      if (connected) {
+        // Remove this listener once connected
+        connectionListeners = connectionListeners.filter(l => l !== listener);
+        resolve();
+      }
+    };
+    connectionListeners.push(listener);
+  });
+};
+
+/**
+ * Get current connection state
+ * @returns {boolean} True if connected to RTDB
+ */
+export const isRTDBConnected = () => isConnected;
+
 /**
  * Hash userId to a consistent color
  */
@@ -80,14 +121,19 @@ export const subscribeToCursorsRTDB = (callback) => {
 
 /**
  * Delete cursor and set up automatic cleanup on disconnect
+ * IMPORTANT: Only call this after connection is established
  * @param {string} userId - User ID
  */
-export const setupCursorCleanup = (userId) => {
+export const setupCursorCleanup = async (userId) => {
   try {
+    // Wait for connection before registering onDisconnect
+    await waitForConnection();
+    
     const cursorRef = ref(rtdb, `sessions/${CANVAS_ID}/cursors/${userId}`);
     
     // Setup automatic removal on disconnect
-    onDisconnect(cursorRef).remove();
+    await onDisconnect(cursorRef).remove();
+    console.log(`[RTDB] Cursor cleanup registered for user ${userId}`);
   } catch (error) {
     console.error('Error setting up cursor cleanup:', error);
   }
@@ -215,16 +261,107 @@ export const setupDraggingCleanup = (shapeId) => {
 };
 
 // ============================================
+// SELECTION OPERATIONS
+// ============================================
+
+/**
+ * Update selected shape for a user (broadcast selection state)
+ * @param {string} userId - User ID
+ * @param {string} userName - Display name
+ * @param {string} shapeId - Shape ID that is selected (null to clear)
+ */
+export const updateSelection = async (userId, userName, shapeId) => {
+  try {
+    const selectionRef = ref(rtdb, `sessions/${CANVAS_ID}/selections/${userId}`);
+    
+    if (shapeId) {
+      await set(selectionRef, {
+        shapeId,
+        userName,
+        color: getUserColor(userId),
+        updatedAt: Date.now(),
+      });
+    } else {
+      // Clear selection
+      await remove(selectionRef);
+    }
+  } catch (error) {
+    console.error('Error updating selection:', error);
+  }
+};
+
+/**
+ * Subscribe to selection updates from all users
+ * @param {Function} callback - Called with array of selection objects
+ * @returns {Function} Unsubscribe function
+ */
+export const subscribeToSelections = (callback) => {
+  const selectionsRef = ref(rtdb, `sessions/${CANVAS_ID}/selections`);
+  
+  return onValue(selectionsRef, (snapshot) => {
+    const selections = [];
+    
+    if (snapshot.exists()) {
+      snapshot.forEach((childSnapshot) => {
+        selections.push({
+          userId: childSnapshot.key,
+          ...childSnapshot.val()
+        });
+      });
+    }
+    
+    callback(selections);
+  }, (error) => {
+    console.error('Error subscribing to selections:', error);
+  });
+};
+
+/**
+ * Setup automatic cleanup of selection state on disconnect
+ * IMPORTANT: Only call this after connection is established
+ * @param {string} userId - User ID
+ */
+export const setupSelectionCleanup = async (userId) => {
+  try {
+    // Wait for connection before registering onDisconnect
+    await waitForConnection();
+    
+    const selectionRef = ref(rtdb, `sessions/${CANVAS_ID}/selections/${userId}`);
+    await onDisconnect(selectionRef).remove();
+    console.log(`[RTDB] Selection cleanup registered for user ${userId}`);
+  } catch (error) {
+    console.error('Error setting up selection cleanup:', error);
+  }
+};
+
+/**
+ * Clear selection for a user (manual cleanup)
+ * @param {string} userId - User ID
+ */
+export const clearSelection = async (userId) => {
+  try {
+    const selectionRef = ref(rtdb, `sessions/${CANVAS_ID}/selections/${userId}`);
+    await remove(selectionRef);
+  } catch (error) {
+    console.error('Error clearing selection:', error);
+  }
+};
+
+// ============================================
 // PRESENCE OPERATIONS
 // ============================================
 
 /**
  * Set user as online and setup automatic offline on disconnect
+ * IMPORTANT: Waits for connection before registering onDisconnect handler
  * @param {string} userId - User ID
  * @param {string} userName - Display name
  */
 export const setUserOnlineRTDB = async (userId, userName) => {
   try {
+    // Wait for connection before doing anything
+    await waitForConnection();
+    
     const presenceRef = ref(rtdb, `sessions/${CANVAS_ID}/presence/${userId}`);
     
     // Set user online
@@ -236,12 +373,15 @@ export const setUserOnlineRTDB = async (userId, userName) => {
     });
     
     // Setup automatic offline status on disconnect
-    onDisconnect(presenceRef).set({
+    // This MUST be called while connected, otherwise it silently fails
+    await onDisconnect(presenceRef).set({
       userName,
       online: false,
       color: getUserColor(userId),
       lastSeen: Date.now(),
     });
+    
+    console.log(`[RTDB] Presence registered for ${userName} (${userId})`);
   } catch (error) {
     console.error('Error setting user online:', error);
   }
@@ -306,16 +446,20 @@ export const setUserOfflineRTDB = async (userId) => {
 // ============================================
 
 /**
- * Subscribe to connection state
+ * Subscribe to connection state changes
  * @param {Function} callback - Called with boolean (true = connected, false = disconnected)
  * @returns {Function} Unsubscribe function
  */
 export const subscribeToConnectionState = (callback) => {
-  const connectedRef = ref(rtdb, '.info/connected');
+  // Add listener to internal connection state
+  connectionListeners.push(callback);
   
-  return onValue(connectedRef, (snapshot) => {
-    const isConnected = snapshot.val() === true;
-    callback(isConnected);
-  });
+  // Call immediately with current state
+  callback(isConnected);
+  
+  // Return unsubscribe function
+  return () => {
+    connectionListeners = connectionListeners.filter(l => l !== callback);
+  };
 };
 

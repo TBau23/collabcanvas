@@ -19,6 +19,12 @@
           "$shapeId": {
             ".write": "auth != null"
           }
+        },
+        "selections": {
+          ".read": "auth != null",
+          "$userId": {
+            ".write": "auth.uid === $userId"
+          }
         }
       }
     }

@@ -248,15 +248,28 @@ const executeTool = async (toolCall, userId, currentShapes) => {
     switch (functionName) {
       case 'createShape': {
         const shapeId = generateShapeId();
+        
+        // Validate and provide defaults for numeric arguments (防止NaN)
+        const x = typeof args.x === 'number' && !isNaN(args.x) ? args.x : 2500;
+        const y = typeof args.y === 'number' && !isNaN(args.y) ? args.y : 2500;
+        const width = typeof args.width === 'number' && !isNaN(args.width) ? args.width : 150;
+        const height = typeof args.height === 'number' && !isNaN(args.height) ? args.height : 100;
+        
+        if (args.x === undefined || args.y === undefined || isNaN(args.x) || isNaN(args.y)) {
+          console.warn('[AI] OpenAI returned invalid coordinates, using defaults:', args);
+        }
+        
         const shapeData = {
           id: shapeId,
           type: args.type,
-          x: args.x,
-          y: args.y,
-          width: args.width,
-          height: args.height,
-          fill: args.fill,
+          x,
+          y,
+          width,
+          height,
+          fill: args.fill || '#4A90E2',
           rotation: args.rotation || 0,
+          updatedBy: userId,
+          updatedAt: Date.now(),
           ...(args.type === 'text' && {
             text: args.text || 'Text',
             fontSize: args.fontSize || 24,
@@ -266,7 +279,7 @@ const executeTool = async (toolCall, userId, currentShapes) => {
         await createShape(userId, shapeData);
         return {
           success: true,
-          message: `Created ${args.type} at (${args.x}, ${args.y})`,
+          message: `Created ${args.type} at (${x}, ${y})`,
           data: shapeData
         };
       }
@@ -325,14 +338,25 @@ const executeTool = async (toolCall, userId, currentShapes) => {
         
         for (const shape of args.shapes) {
           const shapeId = generateShapeId();
+          
+          // Validate and provide defaults for numeric arguments
+          const x = typeof shape.x === 'number' && !isNaN(shape.x) ? shape.x : 2500;
+          const y = typeof shape.y === 'number' && !isNaN(shape.y) ? shape.y : 2500;
+          const width = typeof shape.width === 'number' && !isNaN(shape.width) ? shape.width : 150;
+          const height = typeof shape.height === 'number' && !isNaN(shape.height) ? shape.height : 100;
+          
+          if (shape.x === undefined || shape.y === undefined || isNaN(shape.x) || isNaN(shape.y)) {
+            console.warn('[AI] OpenAI returned invalid coordinates in batch, using defaults:', shape);
+          }
+          
           const shapeData = {
             id: shapeId,
             type: shape.type,
-            x: shape.x,
-            y: shape.y,
-            width: shape.width,
-            height: shape.height,
-            fill: shape.fill,
+            x,
+            y,
+            width,
+            height,
+            fill: shape.fill || '#4A90E2',
             rotation: shape.rotation || 0,
             updatedBy: userId,
             updatedAt: Date.now(),
@@ -404,15 +428,33 @@ const needsCanvasState = (message) => {
 const optimizeCanvasState = (shapes) => {
   if (!shapes || shapes.length === 0) return [];
   
-  // Send only essential data - omit detailed properties
-  return shapes.map(shape => ({
-    id: shape.id,
-    type: shape.type,
-    x: Math.round(shape.x),
-    y: Math.round(shape.y),
-    fill: shape.fill,
-    ...(shape.type === 'text' && shape.text && { text: shape.text.substring(0, 50) }) // Truncate long text
-  }));
+  // Filter out invalid shapes and send only essential data
+  return shapes
+    .filter(shape => {
+      // Validate shape has required numeric properties
+      const isValid = 
+        typeof shape.x === 'number' && !isNaN(shape.x) &&
+        typeof shape.y === 'number' && !isNaN(shape.y);
+      
+      if (!isValid) {
+        console.error('[AI] Invalid shape detected, excluding from canvas state:', {
+          id: shape.id,
+          x: shape.x,
+          y: shape.y,
+          type: shape.type
+        });
+      }
+      
+      return isValid;
+    })
+    .map(shape => ({
+      id: shape.id,
+      type: shape.type,
+      x: Math.round(shape.x),
+      y: Math.round(shape.y),
+      fill: shape.fill,
+      ...(shape.type === 'text' && shape.text && { text: shape.text.substring(0, 50) }) // Truncate long text
+    }));
 };
 
 /**
