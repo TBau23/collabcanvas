@@ -5,11 +5,9 @@ import { createShape, updateShape, deleteShape, subscribeToShapes } from '../../
 import { 
   updateCursorRTDB, 
   subscribeToCursorsRTDB, 
-  deleteCursorRTDB, 
   setupCursorCleanup,
   setUserOnlineRTDB, 
-  subscribeToPresenceRTDB, 
-  setUserOfflineRTDB,
+  subscribeToPresenceRTDB,
   updateDraggingPosition,
   subscribeToDragging,
   clearDraggingPosition,
@@ -18,7 +16,6 @@ import {
   updateSelection,
   subscribeToSelections,
   setupSelectionCleanup,
-  clearSelection,
   subscribeToConnectionState
 } from '../../services/rtdbService';
 import CanvasToolbar from './CanvasToolbar';
@@ -137,17 +134,29 @@ const Canvas = () => {
 
   // Subscribe to cursor updates from other users
   useEffect(() => {
-    if (!user) return;
+    const timestamp = new Date().toISOString();
+    console.log(`[CANVAS-DIAG ${timestamp}] ===== CURSOR SUBSCRIPTION EFFECT TRIGGERED =====`);
+    
+    if (!user) {
+      console.log(`[CANVAS-DIAG ${timestamp}] No user, skipping cursor setup`);
+      return;
+    }
 
+    console.log(`[CANVAS-DIAG ${timestamp}] Setting up cursor cleanup for user: ${user.uid}`);
     // Setup automatic cursor cleanup on disconnect (waits for connection internally)
     setupCursorCleanup(user.uid);
 
+    console.log(`[CANVAS-DIAG ${timestamp}] Subscribing to cursor updates...`);
     const unsubscribe = subscribeToCursorsRTDB((remoteCursors) => {
       const otherCursors = remoteCursors.filter((c) => c.userId !== user.uid);
       setCursors(otherCursors);
     });
 
-    return unsubscribe;
+    return () => {
+      const cleanupTimestamp = new Date().toISOString();
+      console.log(`[CANVAS-DIAG ${cleanupTimestamp}] Unsubscribing from cursor updates`);
+      unsubscribe();
+    };
   }, [user]);
 
   // Subscribe to shape updates from Firestore
@@ -215,46 +224,73 @@ const Canvas = () => {
 
   // Subscribe to remote selection updates
   useEffect(() => {
-    if (!user) return;
+    const timestamp = new Date().toISOString();
+    console.log(`[CANVAS-DIAG ${timestamp}] ===== SELECTION SUBSCRIPTION EFFECT TRIGGERED =====`);
+    
+    if (!user) {
+      console.log(`[CANVAS-DIAG ${timestamp}] No user, skipping selection setup`);
+      return;
+    }
 
+    console.log(`[CANVAS-DIAG ${timestamp}] Setting up selection cleanup for user: ${user.uid}`);
     // Setup automatic selection cleanup on disconnect (waits for connection internally)
     setupSelectionCleanup(user.uid);
 
+    console.log(`[CANVAS-DIAG ${timestamp}] Subscribing to selection updates...`);
     const unsubscribe = subscribeToSelections((selections) => {
       // Filter out our own selection
       const otherSelections = selections.filter(sel => sel.userId !== user.uid);
       setRemoteSelections(otherSelections);
     });
 
-    return unsubscribe;
+    return () => {
+      const cleanupTimestamp = new Date().toISOString();
+      console.log(`[CANVAS-DIAG ${cleanupTimestamp}] Unsubscribing from selection updates`);
+      unsubscribe();
+    };
   }, [user]);
 
   // Initialize presence and handle reconnection
   useEffect(() => {
-    if (!user) return;
+    const timestamp = new Date().toISOString();
+    console.log(`[CANVAS-DIAG ${timestamp}] ===== PRESENCE EFFECT TRIGGERED =====`);
+    
+    if (!user) {
+      console.log(`[CANVAS-DIAG ${timestamp}] No user, skipping presence setup`);
+      return;
+    }
 
     const userName = user.displayName || user.email;
+    console.log(`[CANVAS-DIAG ${timestamp}] Setting up presence for: ${userName} (${user.uid})`);
 
     // Set user online (waits for connection internally)
+    console.log(`[CANVAS-DIAG ${timestamp}] Calling setUserOnlineRTDB()...`);
     setUserOnlineRTDB(user.uid, userName);
 
     // Subscribe to connection state to handle reconnection
+    console.log(`[CANVAS-DIAG ${timestamp}] Subscribing to connection state changes...`);
     const unsubscribe = subscribeToConnectionState((connected) => {
+      const innerTimestamp = new Date().toISOString();
       if (connected) {
-        console.log('[Canvas] RTDB connected, re-registering presence and cleanup handlers');
+        console.log(`[CANVAS-DIAG ${innerTimestamp}] 🟢 RTDB CONNECTED - re-registering presence and cleanup handlers`);
         // Re-register all onDisconnect handlers when reconnecting
         setUserOnlineRTDB(user.uid, userName);
         setupCursorCleanup(user.uid);
         setupSelectionCleanup(user.uid);
       } else {
-        console.log('[Canvas] RTDB disconnected');
+        console.log(`[CANVAS-DIAG ${innerTimestamp}] 🔴 RTDB DISCONNECTED`);
       }
     });
 
     // Cleanup on unmount
     return () => {
+      const cleanupTimestamp = new Date().toISOString();
+      console.log(`[CANVAS-DIAG ${cleanupTimestamp}] ===== PRESENCE EFFECT CLEANUP (Component Unmounting) =====`);
+      console.log(`[CANVAS-DIAG ${cleanupTimestamp}] Unsubscribing from connection state...`);
       unsubscribe();
-      setUserOfflineRTDB(user.uid);
+      // NOTE: Manual cleanup is now handled in authService.logout() BEFORE signing out
+      // This ensures auth token is still valid when cleaning up RTDB data
+      // onDisconnect handlers will still fire for tab close/crash scenarios
     };
   }, [user]);
 
@@ -320,25 +356,11 @@ const Canvas = () => {
     };
   }, [selectedId, shapes, editingText]);
 
-  // Clean up cursor, presence, and selection on window close/refresh
-  useEffect(() => {
-    if (!user) return;
-
-    const handleBeforeUnload = () => {
-      // Note: beforeunload is unreliable, especially on mobile
-      // The onDisconnect handlers in RTDB are the primary cleanup mechanism
-      // This is just a best-effort synchronous cleanup attempt
-      deleteCursorRTDB(user.uid);
-      setUserOfflineRTDB(user.uid);
-      clearSelection(user.uid);
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [user]);
+  // Note: beforeunload cleanup removed - it's unreliable and often fails
+  // Instead, we rely on:
+  // 1. onDisconnect handlers (registered in RTDB) - fires on tab close/crash
+  // 2. Manual cleanup in authService.logout() - fires on explicit logout button
+  // This dual approach ensures cleanup happens in both scenarios
 
   // Track and broadcast mouse position
   const handleMouseMove = (e) => {

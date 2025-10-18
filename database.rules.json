@@ -5,13 +5,13 @@
         "cursors": {
           ".read": "auth != null",
           "$userId": {
-            ".write": "auth.uid === $userId"
+            ".write": "(auth != null && auth.uid === $userId) || !newData.exists()"
           }
         },
         "presence": {
           ".read": "auth != null",
           "$userId": {
-            ".write": "auth.uid === $userId"
+            ".write": "(auth != null && auth.uid === $userId) || !newData.exists()"
           }
         },
         "dragging": {
@@ -23,7 +23,7 @@
         "selections": {
           ".read": "auth != null",
           "$userId": {
-            ".write": "auth.uid === $userId"
+            ".write": "(auth != null && auth.uid === $userId) || !newData.exists()"
           }
         }
       }
