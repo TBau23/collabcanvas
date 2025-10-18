@@ -7,7 +7,7 @@ import './AIModal.css';
  * AI Assistant Modal
  * Chat interface for natural language canvas commands
  */
-const AIModal = ({ isOpen, onClose, currentShapes }) => {
+const AIModal = ({ isOpen, onClose, currentShapes, onShapesCreated }) => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([
     {
@@ -67,6 +67,12 @@ const AIModal = ({ isOpen, onClose, currentShapes }) => {
       const result = await sendCommand(userMessage, user.uid, currentShapes);
 
       if (result.success) {
+        // OPTIMISTIC UPDATE: Add created shapes to Canvas immediately
+        if (result.createdShapes && result.createdShapes.length > 0 && onShapesCreated) {
+          console.log(`[AIModal] Optimistically adding ${result.createdShapes.length} shapes to canvas`);
+          onShapesCreated(result.createdShapes);
+        }
+        
         // Show progress for large operations
         const toolCallCount = result.toolCalls?.length || 0;
         const isLargeOperation = toolCallCount >= 10;

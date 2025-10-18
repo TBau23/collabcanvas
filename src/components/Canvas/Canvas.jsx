@@ -964,6 +964,12 @@ const Canvas = () => {
         isOpen={isAIModalOpen}
         onClose={() => setIsAIModalOpen(false)}
         currentShapes={shapes}
+        onShapesCreated={(newShapes) => {
+          // Optimistic update: Add AI-generated shapes immediately to local state
+          // Firestore will confirm in background (200-300ms), but user sees instant feedback
+          console.log(`[Canvas] Optimistically adding ${newShapes.length} AI-generated shapes`);
+          setShapes([...shapes, ...newShapes]);
+        }}
       />
     </div>
   );

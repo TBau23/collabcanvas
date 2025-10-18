@@ -448,6 +448,8 @@ export const sendCommand = async (message, userId, currentShapes = []) => {
 
     // If the AI returned tool calls, execute them in parallel for maximum performance
     let toolResults = [];
+    let createdShapes = [];
+    
     if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
       console.log(`[AI] Executing ${aiMessage.tool_calls.length} tool calls in parallel`);
       
@@ -465,12 +467,31 @@ export const sendCommand = async (message, userId, currentShapes = []) => {
       );
       
       console.log(`[AI] Completed ${toolResults.length} tool calls`);
+      
+      // Collect all created shapes for optimistic updates
+      toolResults.forEach(tr => {
+        if (tr.result.success && tr.result.data) {
+          // Single shape creation (createShape)
+          if (tr.toolCall === 'createShape' && !Array.isArray(tr.result.data)) {
+            createdShapes.push(tr.result.data);
+          }
+          // Multiple shapes creation (createMultipleShapes)
+          else if (tr.toolCall === 'createMultipleShapes' && Array.isArray(tr.result.data)) {
+            createdShapes.push(...tr.result.data);
+          }
+        }
+      });
+      
+      if (createdShapes.length > 0) {
+        console.log(`[AI] Returning ${createdShapes.length} created shapes for optimistic update`);
+      }
     }
 
     return {
       success: true,
       aiResponse: aiMessage.content || 'Done!',
       toolCalls: toolResults,
+      createdShapes, // NEW: Return created shapes for optimistic updates
       usage
     };
   } catch (error) {
