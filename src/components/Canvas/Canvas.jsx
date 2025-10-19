@@ -20,6 +20,7 @@ import {
 } from '../../services/rtdbService';
 import CanvasToolbar from './CanvasToolbar';
 import PresencePanel from '../Presence/PresencePanel';
+import LayerPanel from '../LayerPanel/LayerPanel';
 import AIButton from '../AI/AIButton';
 import AIModal from '../AI/AIModal';
 import './Canvas.css';
@@ -77,7 +78,7 @@ const Canvas = () => {
   // Clipboard state for copy/paste
   const [clipboard, setClipboard] = useState([]);
 
-  // Calculate bounding box for multiple selected shapes
+  // Calculate bounding box for multiple selected shapes (accounting for rotation)
   const getSelectionBounds = (shapes, selectedIds) => {
     if (selectedIds.length === 0) return null;
     
@@ -87,28 +88,41 @@ const Canvas = () => {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
     selectedShapes.forEach(shape => {
-      let shapeLeft, shapeRight, shapeTop, shapeBottom;
+      const width = shape.width || (shape.type === 'ellipse' ? 120 : 200);
+      const height = shape.height || (shape.type === 'ellipse' ? 80 : 50);
+      const rotation = shape.rotation || 0;
       
-      if (shape.type === 'ellipse') {
-        // For ellipses, x/y is the CENTER
-        const radiusX = (shape.width || 120) / 2;
-        const radiusY = (shape.height || 80) / 2;
-        shapeLeft = shape.x - radiusX;
-        shapeRight = shape.x + radiusX;
-        shapeTop = shape.y - radiusY;
-        shapeBottom = shape.y + radiusY;
+      if (rotation === 0) {
+        // No rotation - simple case
+        minX = Math.min(minX, shape.x);
+        minY = Math.min(minY, shape.y);
+        maxX = Math.max(maxX, shape.x + width);
+        maxY = Math.max(maxY, shape.y + height);
       } else {
-        // For rectangles and text, x/y is top-left corner
-        shapeLeft = shape.x;
-        shapeRight = shape.x + (shape.width || 200);
-        shapeTop = shape.y;
-        shapeBottom = shape.y + (shape.height || 50);
+        // Rotation - calculate rotated corners and find axis-aligned bounding box
+        const rad = (rotation * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        
+        // Four corners of the shape (before rotation)
+        const corners = [
+          { x: 0, y: 0 },
+          { x: width, y: 0 },
+          { x: width, y: height },
+          { x: 0, y: height },
+        ];
+        
+        // Rotate each corner and translate to shape position
+        corners.forEach(corner => {
+          const rotatedX = corner.x * cos - corner.y * sin + shape.x;
+          const rotatedY = corner.x * sin + corner.y * cos + shape.y;
+          
+          minX = Math.min(minX, rotatedX);
+          minY = Math.min(minY, rotatedY);
+          maxX = Math.max(maxX, rotatedX);
+          maxY = Math.max(maxY, rotatedY);
+        });
       }
-      
-      minX = Math.min(minX, shapeLeft);
-      minY = Math.min(minY, shapeTop);
-      maxX = Math.max(maxX, shapeRight);
-      maxY = Math.max(maxY, shapeBottom);
     });
     
     return {
@@ -709,6 +723,12 @@ const Canvas = () => {
   const handleShapeClick = (e, shapeId) => {
     e.cancelBubble = true; // Prevent stage click from firing
     
+    // Check if shape is locked
+    const shape = shapes.find(s => s.id === shapeId);
+    if (shape && shape.locked) {
+      return; // Can't select locked shapes
+    }
+    
     if (currentTool === 'select') {
       const isShiftKey = e.evt.shiftKey;
       const isMetaKey = e.evt.metaKey || e.evt.ctrlKey; // Cmd on Mac, Ctrl on Windows
@@ -1133,6 +1153,13 @@ const Canvas = () => {
         hasSelection={selectedIds.length > 0}
       />
       <PresencePanel users={onlineUsers} currentUser={user} />
+      <LayerPanel 
+        shapes={shapes}
+        selectedIds={selectedIds}
+        onSelectShape={setSelectedIds}
+        remoteSelections={remoteSelections}
+        user={user}
+      />
       
       <Stage
         ref={stageRef}
@@ -1202,8 +1229,11 @@ const Canvas = () => {
 
         {/* Shapes layer */}
         <Layer>
-          {getVisibleShapes(shapes, selectedIds, isDragging, isTransforming).map((shape) => {
+          {getVisibleShapes(shapes, selectedIds, isDragging, isTransforming)
+            .filter(shape => shape.visible !== false) // Don't render hidden shapes
+            .map((shape) => {
             const isSelected = selectedIds.includes(shape.id);
+            const isLocked = shape.locked === true;
             
             // Check if this shape is being dragged/transformed by another user
             const remoteTransform = remoteDragging.find(drag => drag.shapeId === shape.id);
@@ -1258,7 +1288,7 @@ const Canvas = () => {
               y: displayY,
               fill: shape.fill,
               rotation: displayRotation,
-              draggable: currentTool === 'select',
+              draggable: currentTool === 'select' && !isLocked, // Can't drag locked shapes
               onClick: (e) => handleShapeClick(e, shape.id),
               onDragStart: (e) => handleShapeDragStart(e, shape.id),
               onDragMove: (e) => handleShapeDragMove(shape.id, e),
@@ -1268,7 +1298,7 @@ const Canvas = () => {
               onTransformEnd: (e) => handleShapeTransformEnd(shape.id, e.target),
               stroke: outlineColor,
               strokeWidth: outlineWidth,
-              opacity: shapeOpacity,
+              opacity: isLocked ? shapeOpacity * 0.7 : shapeOpacity, // Locked shapes slightly faded
             };
 
             if (shape.type === 'rectangle') {
@@ -1340,6 +1370,115 @@ const Canvas = () => {
               />
             ) : null;
           })()}
+          
+          {/* Remote user selection indicators - always show bounding box with username tag */}
+          {remoteSelections.map((selection) => {
+            const { userId, userName, color, shapeIds } = selection;
+            
+            if (!shapeIds || shapeIds.length === 0) return null;
+            
+            // Helper function to get shape position (live drag position if available, otherwise stored position)
+            const getShapeDisplayPosition = (shape) => {
+              const remoteTransform = remoteDragging.find(drag => drag.shapeId === shape.id && drag.userId === userId);
+              return {
+                x: remoteTransform?.x ?? shape.x,
+                y: remoteTransform?.y ?? shape.y,
+                width: remoteTransform?.width ?? shape.width,
+                height: remoteTransform?.height ?? shape.height,
+                rotation: remoteTransform?.rotation ?? shape.rotation,
+              };
+            };
+            
+            // Calculate bounding box for all selected shapes (single or multiple)
+            const selectedShapes = shapes.filter(s => shapeIds.includes(s.id));
+            if (selectedShapes.length === 0) return null;
+            
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            
+            selectedShapes.forEach(shape => {
+              const displayPos = getShapeDisplayPosition(shape);
+              const width = displayPos.width || (shape.type === 'ellipse' ? 120 : 200);
+              const height = displayPos.height || (shape.type === 'ellipse' ? 80 : 50);
+              const rotation = displayPos.rotation || 0;
+              
+              if (rotation === 0) {
+                // No rotation - simple case
+                minX = Math.min(minX, displayPos.x);
+                minY = Math.min(minY, displayPos.y);
+                maxX = Math.max(maxX, displayPos.x + width);
+                maxY = Math.max(maxY, displayPos.y + height);
+              } else {
+                // Rotation - calculate rotated corners and find axis-aligned bounding box
+                const rad = (rotation * Math.PI) / 180;
+                const cos = Math.cos(rad);
+                const sin = Math.sin(rad);
+                
+                // Four corners of the shape (before rotation)
+                const corners = [
+                  { x: 0, y: 0 },
+                  { x: width, y: 0 },
+                  { x: width, y: height },
+                  { x: 0, y: height },
+                ];
+                
+                // Rotate each corner and translate to shape position
+                corners.forEach(corner => {
+                  const rotatedX = corner.x * cos - corner.y * sin + displayPos.x;
+                  const rotatedY = corner.x * sin + corner.y * cos + displayPos.y;
+                  
+                  minX = Math.min(minX, rotatedX);
+                  minY = Math.min(minY, rotatedY);
+                  maxX = Math.max(maxX, rotatedX);
+                  maxY = Math.max(maxY, rotatedY);
+                });
+              }
+            });
+            
+            const bounds = {
+              x: minX,
+              y: minY,
+              width: maxX - minX,
+              height: maxY - minY,
+            };
+            
+            const tagWidth = userName.length * 7 + 12;
+            const tagHeight = 20;
+            
+            return (
+              <React.Fragment key={`selection-box-${userId}`}>
+                {/* Bounding box */}
+                <Rect
+                  x={bounds.x}
+                  y={bounds.y}
+                  width={bounds.width}
+                  height={bounds.height}
+                  stroke={color}
+                  strokeWidth={2}
+                  dash={[10, 5]}
+                  listening={false}
+                />
+                {/* Username tag at top of bounding box */}
+                <Rect
+                  x={bounds.x}
+                  y={bounds.y - tagHeight - 4}
+                  width={tagWidth}
+                  height={tagHeight}
+                  fill={color}
+                  cornerRadius={3}
+                  listening={false}
+                />
+                <Text
+                  x={bounds.x + 6}
+                  y={bounds.y - tagHeight - 1}
+                  text={userName}
+                  fontSize={12}
+                  fill="white"
+                  fontStyle="bold"
+                  listening={false}
+                />
+              </React.Fragment>
+            );
+          })}
           
           {/* Transformer for resize and rotate handles (single selection only) */}
           {selectedIds.length === 1 && (

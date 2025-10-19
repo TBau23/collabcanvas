@@ -125,6 +125,11 @@
   padding: 8px 12px;
 }
 
+.tool-button.small .tool-icon {
+  font-size: 18px;
+  color: #333;
+}
+
 .tool-label-small {
   font-size: 10px;
   font-weight: 500;
