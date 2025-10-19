@@ -73,6 +73,9 @@ const Canvas = () => {
   const [editingText, setEditingText] = useState(null);
   const [textEditorValue, setTextEditorValue] = useState('');
   const [textEditorPosition, setTextEditorPosition] = useState({ x: 0, y: 0, width: 200 });
+  
+  // Clipboard state for copy/paste
+  const [clipboard, setClipboard] = useState([]);
 
   // Calculate bounding box for multiple selected shapes
   const getSelectionBounds = (shapes, selectedIds) => {
@@ -374,7 +377,7 @@ const Canvas = () => {
     updateSelection(user.uid, userName, selectedIds);
   }, [selectedIds, user]);
 
-  // Handle keyboard shortcuts (Delete key and Cmd+K for AI)
+  // Handle keyboard shortcuts (Delete, Copy, Paste, Cut, AI)
   useEffect(() => {
     const handleKeyDown = (e) => {
       // Don't handle keyboard shortcuts while editing text
@@ -384,6 +387,64 @@ const Canvas = () => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         setIsAIModalOpen(true);
+        return;
+      }
+      
+      // Cmd+C or Ctrl+C to copy
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c' && selectedIds.length > 0) {
+        e.preventDefault();
+        const selectedShapes = shapes.filter(shape => selectedIds.includes(shape.id));
+        setClipboard(selectedShapes);
+        console.log(`[Copy] Copied ${selectedShapes.length} shape(s) to clipboard`);
+        return;
+      }
+      
+      // Cmd+V or Ctrl+V to paste
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v' && clipboard.length > 0) {
+        e.preventDefault();
+        
+        // Create new shapes with offset positions and new IDs
+        const pasteOffset = 50; // Offset by 50px in both directions
+        const newShapes = clipboard.map(shape => ({
+          ...shape,
+          id: crypto.randomUUID(), // New unique ID
+          x: shape.x + pasteOffset,
+          y: shape.y + pasteOffset,
+          updatedBy: user.uid,
+          updatedAt: Date.now(),
+        }));
+        
+        // Add to local state immediately (optimistic)
+        setShapes([...shapes, ...newShapes]);
+        
+        // Select the newly pasted shapes
+        setSelectedIds(newShapes.map(s => s.id));
+        
+        // Save to Firestore (batch operation)
+        newShapes.forEach(shape => createShape(user.uid, shape));
+        
+        console.log(`[Paste] Pasted ${newShapes.length} shape(s)`);
+        return;
+      }
+      
+      // Cmd+X or Ctrl+X to cut
+      if ((e.metaKey || e.ctrlKey) && e.key === 'x' && selectedIds.length > 0) {
+        e.preventDefault();
+        
+        // Copy to clipboard
+        const selectedShapes = shapes.filter(shape => selectedIds.includes(shape.id));
+        setClipboard(selectedShapes);
+        
+        // Delete from local state immediately (optimistic)
+        setShapes(shapes.filter(shape => !selectedIds.includes(shape.id)));
+        
+        // Clear selection
+        setSelectedIds([]);
+        
+        // Delete from Firestore (batch operation)
+        selectedIds.forEach(id => deleteShape(id));
+        
+        console.log(`[Cut] Cut ${selectedShapes.length} shape(s) to clipboard`);
         return;
       }
       
@@ -408,7 +469,7 @@ const Canvas = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedIds, shapes, editingText]);
+  }, [selectedIds, shapes, editingText, clipboard, user]);
 
   // Note: beforeunload cleanup removed - it's unreliable and often fails
   // Instead, we rely on:
