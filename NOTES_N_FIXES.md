@@ -1,13 +1,9 @@
--- agent is not using the colors I have defined, broadly we should just be using a more universal color palette
--- agent chat should not block the main canvas, it should be a modal that can be closed and opened again
--- canvas should open to the center of the canvas, not the top left
--- shape updating is now working to some extent, but if I say something like "move the blue circle down 1000 pixels, it will also move other blue shapes (even squares) down 1000 pixels
+
 -- the return message from the agent probably shouldnt say the ID!
 -- clean up console.logs
--- how much benefit is there to using firestore real time db - the existing one is pretty snappy but not sure.
 - noticing some strange behavior with transforms - if i drag across the y axis, it resizes strangely
 - probs need a way to change font size and font family
 - probs need a way to change the font color
 
---prescence indicator not working always ? 
+
 -- requests to do something like delete a circle just get a response identifying where it is, but not deleting it. Some things probably have to be done sequentially
