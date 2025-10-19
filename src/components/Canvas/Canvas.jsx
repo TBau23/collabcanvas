@@ -243,7 +243,9 @@ const Canvas = () => {
           return localShape;
         });
 
-        return mergedShapes;
+        // Sort shapes by zIndex for proper rendering order
+        // Shapes without zIndex default to 0 (backward compatibility)
+        return mergedShapes.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
       });
     });
 
@@ -403,13 +405,17 @@ const Canvas = () => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'v' && clipboard.length > 0) {
         e.preventDefault();
         
+        // Calculate zIndex - pasted shapes go on top
+        const maxZIndex = shapes.reduce((max, s) => Math.max(max, s.zIndex || 0), 0);
+        
         // Create new shapes with offset positions and new IDs
         const pasteOffset = 50; // Offset by 50px in both directions
-        const newShapes = clipboard.map(shape => ({
+        const newShapes = clipboard.map((shape, index) => ({
           ...shape,
           id: crypto.randomUUID(), // New unique ID
           x: shape.x + pasteOffset,
           y: shape.y + pasteOffset,
+          zIndex: maxZIndex + 1 + index, // Maintain relative z-order
           updatedBy: user.uid,
           updatedAt: Date.now(),
         }));
@@ -656,6 +662,9 @@ const Canvas = () => {
         const transform = stage.getAbsoluteTransform().copy().invert();
         const clickPos = transform.point(pos);
 
+        // Calculate zIndex - new shapes go on top
+        const maxZIndex = shapes.reduce((max, s) => Math.max(max, s.zIndex || 0), 0);
+
         // Shape-specific defaults
         const shapeDefaults = {
           rectangle: { width: 150, height: 100 },
@@ -671,6 +680,7 @@ const Canvas = () => {
           ...shapeDefaults[currentTool],
           fill: currentColor,
           rotation: 0,
+          zIndex: maxZIndex + 1, // Always create on top
           ...(currentTool === 'text' && { 
             text: 'Double-click to edit',
             fontSize: 24,
@@ -1064,33 +1074,50 @@ const Canvas = () => {
   const handleBringToFront = () => {
     if (selectedIds.length === 0) return;
     
-    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id))
-      .map(s => ({ ...s, updatedBy: user.uid, updatedAt: Date.now() }));
-
-    // Move to end of array (rendered last = on top)
-    const newShapes = [
-      ...shapes.filter(s => !selectedIds.includes(s.id)),
-      ...selectedShapes
-    ];
-    setShapes(newShapes);
+    // Calculate new zIndex - bring to top
+    const maxZIndex = shapes.reduce((max, s) => Math.max(max, s.zIndex || 0), 0);
     
-    // Note: Z-index isn't stored in Firestore, it's determined by array order in local state
-    // For multi-user consistency, we'd need to add a z-index field to Firestore
+    // Update selected shapes with new zIndex values
+    const updatedShapes = shapes.map(s => {
+      if (selectedIds.includes(s.id)) {
+        const newZIndex = maxZIndex + 1 + selectedIds.indexOf(s.id);
+        return { ...s, zIndex: newZIndex, updatedBy: user.uid, updatedAt: Date.now() };
+      }
+      return s;
+    });
+    
+    // Sort by zIndex and update local state
+    setShapes(updatedShapes.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)));
+    
+    // Save zIndex to Firestore for persistence
+    selectedIds.forEach((id, index) => {
+      updateShape(user.uid, id, { zIndex: maxZIndex + 1 + index });
+    });
   };
 
   // Send selected shapes to back
   const handleSendToBack = () => {
     if (selectedIds.length === 0) return;
     
-    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id))
-      .map(s => ({ ...s, updatedBy: user.uid, updatedAt: Date.now() }));
-
-    // Move to start of array (rendered first = on bottom)
-    const newShapes = [
-      ...selectedShapes,
-      ...shapes.filter(s => !selectedIds.includes(s.id))
-    ];
-    setShapes(newShapes);
+    // Find the minimum zIndex (bottom of stack)
+    const minZIndex = shapes.reduce((min, s) => Math.min(min, s.zIndex || 0), 0);
+    
+    // Set selected shapes to zIndex values below current minimum
+    const updatedShapes = shapes.map(s => {
+      if (selectedIds.includes(s.id)) {
+        const newZIndex = minZIndex - selectedIds.length + selectedIds.indexOf(s.id);
+        return { ...s, zIndex: newZIndex, updatedBy: user.uid, updatedAt: Date.now() };
+      }
+      return s;
+    });
+    
+    // Sort by zIndex and update local state
+    setShapes(updatedShapes.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0)));
+    
+    // Save zIndex to Firestore for persistence
+    selectedIds.forEach((id, index) => {
+      updateShape(user.uid, id, { zIndex: minZIndex - selectedIds.length + index });
+    });
   };
 
   return (
