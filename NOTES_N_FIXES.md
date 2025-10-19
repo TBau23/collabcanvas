@@ -7,3 +7,8 @@
 
 
 -- requests to do something like delete a circle just get a response identifying where it is, but not deleting it. Some things probably have to be done sequentially
+
+
+-- "Also, I need to handle ellipses correctly - their x/y is the center, not top-left!" 
+   ---> check this, might make ai layouts tough
+-- make hand tool look like a hand

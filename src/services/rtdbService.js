@@ -5,7 +5,7 @@ const CANVAS_ID = 'main-canvas';
 const CURSOR_THROTTLE_MS = 50; // Reduced from 100ms for lower latency
 const DRAG_THROTTLE_MS = 50; // Same as cursor for smooth dragging
 let lastCursorUpdate = 0;
-let lastDragUpdate = 0;
+const lastDragUpdatePerShape = {}; // Per-shape throttling for group drags
 
 // Connection state tracking
 let isConnected = false;
@@ -228,9 +228,10 @@ export const updateDraggingPosition = async (userId, shapeId, x, y) => {
 export const updateTransformState = async (userId, shapeId, transform) => {
   const now = Date.now();
   
-  // Throttle updates (same as drag)
-  if (now - lastDragUpdate < DRAG_THROTTLE_MS) return;
-  lastDragUpdate = now;
+  // Throttle updates PER SHAPE (not global) to support group drags
+  const lastUpdate = lastDragUpdatePerShape[shapeId] || 0;
+  if (now - lastUpdate < DRAG_THROTTLE_MS) return;
+  lastDragUpdatePerShape[shapeId] = now;
   
   try {
     const transformRef = ref(rtdb, `sessions/${CANVAS_ID}/dragging/${shapeId}`);
@@ -301,18 +302,18 @@ export const setupDraggingCleanup = (shapeId) => {
 // ============================================
 
 /**
- * Update selected shape for a user (broadcast selection state)
+ * Update selected shapes for a user (broadcast selection state)
  * @param {string} userId - User ID
  * @param {string} userName - Display name
- * @param {string} shapeId - Shape ID that is selected (null to clear)
+ * @param {string[]} shapeIds - Array of shape IDs that are selected (empty array or null to clear)
  */
-export const updateSelection = async (userId, userName, shapeId) => {
+export const updateSelection = async (userId, userName, shapeIds) => {
   try {
     const selectionRef = ref(rtdb, `sessions/${CANVAS_ID}/selections/${userId}`);
     
-    if (shapeId) {
+    if (shapeIds && shapeIds.length > 0) {
       await set(selectionRef, {
-        shapeId,
+        shapeIds,
         userName,
         color: getUserColor(userId),
         updatedAt: Date.now(),

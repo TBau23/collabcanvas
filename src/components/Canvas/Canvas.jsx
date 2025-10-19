@@ -45,9 +45,16 @@ const Canvas = () => {
   const [currentTool, setCurrentTool] = useState('select');
   const [currentColor, setCurrentColor] = useState('#4A90E2');
   const [shapes, setShapes] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isTransforming, setIsTransforming] = useState(false);
+  
+  // Marquee selection state
+  const [isMarqueeSelecting, setIsMarqueeSelecting] = useState(false);
+  const [marqueeStart, setMarqueeStart] = useState(null);
+  const [marqueeCurrent, setMarqueeCurrent] = useState(null);
+  const hasDragged = useRef(false); // Track if user has dragged (vs clicked)
+  const justFinishedMarquee = useRef(false); // Prevent click event after marquee
   
   // Pan and zoom state - initialize to center of canvas
   const canvasSize = 5000;
@@ -67,8 +74,50 @@ const Canvas = () => {
   const [textEditorValue, setTextEditorValue] = useState('');
   const [textEditorPosition, setTextEditorPosition] = useState({ x: 0, y: 0, width: 200 });
 
+  // Calculate bounding box for multiple selected shapes
+  const getSelectionBounds = (shapes, selectedIds) => {
+    if (selectedIds.length === 0) return null;
+    
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    if (selectedShapes.length === 0) return null;
+    
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    
+    selectedShapes.forEach(shape => {
+      let shapeLeft, shapeRight, shapeTop, shapeBottom;
+      
+      if (shape.type === 'ellipse') {
+        // For ellipses, x/y is the CENTER
+        const radiusX = (shape.width || 120) / 2;
+        const radiusY = (shape.height || 80) / 2;
+        shapeLeft = shape.x - radiusX;
+        shapeRight = shape.x + radiusX;
+        shapeTop = shape.y - radiusY;
+        shapeBottom = shape.y + radiusY;
+      } else {
+        // For rectangles and text, x/y is top-left corner
+        shapeLeft = shape.x;
+        shapeRight = shape.x + (shape.width || 200);
+        shapeTop = shape.y;
+        shapeBottom = shape.y + (shape.height || 50);
+      }
+      
+      minX = Math.min(minX, shapeLeft);
+      minY = Math.min(minY, shapeTop);
+      maxX = Math.max(maxX, shapeRight);
+      maxY = Math.max(maxY, shapeBottom);
+    });
+    
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  };
+
   // Viewport culling helper - only render shapes in view (plus selected/dragging/transforming)
-  const getVisibleShapes = (shapes, selectedId, isDragging, isTransforming) => {
+  const getVisibleShapes = (shapes, selectedIds, isDragging, isTransforming) => {
     if (!stageRef.current) return shapes;
     
     const stage = stageRef.current;
@@ -85,11 +134,11 @@ const Canvas = () => {
     const margin = 200;
     
     const visibleShapes = shapes.filter(shape => {
-      // ALWAYS render selected shape (critical for Transformer)
-      if (shape.id === selectedId) return true;
+      // ALWAYS render selected shapes (critical for Transformer)
+      if (selectedIds.includes(shape.id)) return true;
       
       // ALWAYS render shape being dragged or transformed
-      if ((isDragging || isTransforming) && shape.id === selectedId) return true;
+      if ((isDragging || isTransforming) && selectedIds.includes(shape.id)) return true;
       
       // Get shape bounds (handle text shapes with no initial width/height)
       const shapeWidth = shape.width || 200;
@@ -296,19 +345,24 @@ const Canvas = () => {
 
   // Update Transformer and color picker when selection changes
   useEffect(() => {
-    if (selectedId && transformerRef.current && shapeRefs.current[selectedId]) {
-      transformerRef.current.nodes([shapeRefs.current[selectedId]]);
-      transformerRef.current.getLayer().batchDraw();
-      
-      // Update color picker to match selected shape's color
-      const selectedShape = shapes.find(s => s.id === selectedId);
-      if (selectedShape) {
-        setCurrentColor(selectedShape.fill);
+    if (selectedIds.length > 0 && transformerRef.current) {
+      // For now, attach transformer to first selected shape
+      // Feature 2 will handle group transformations
+      const firstSelectedId = selectedIds[0];
+      if (shapeRefs.current[firstSelectedId]) {
+        transformerRef.current.nodes([shapeRefs.current[firstSelectedId]]);
+        transformerRef.current.getLayer().batchDraw();
+        
+        // Update color picker to match first selected shape's color
+        const selectedShape = shapes.find(s => s.id === firstSelectedId);
+        if (selectedShape) {
+          setCurrentColor(selectedShape.fill);
+        }
       }
     } else if (transformerRef.current) {
       transformerRef.current.nodes([]);
     }
-  }, [selectedId, shapes]);
+  }, [selectedIds, shapes]);
 
   // Broadcast selection state to other users
   useEffect(() => {
@@ -316,9 +370,9 @@ const Canvas = () => {
 
     const userName = user.displayName || user.email;
     
-    // Update RTDB with current selection (or clear if null)
-    updateSelection(user.uid, userName, selectedId);
-  }, [selectedId, user]);
+    // Update RTDB with current selection (or clear if empty array)
+    updateSelection(user.uid, userName, selectedIds);
+  }, [selectedIds, user]);
 
   // Handle keyboard shortcuts (Delete key and Cmd+K for AI)
   useEffect(() => {
@@ -334,18 +388,18 @@ const Canvas = () => {
       }
       
       // Delete or Backspace key
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
         // Prevent default behavior (like browser back navigation on Backspace)
         e.preventDefault();
         
-        // Delete from local state immediately (optimistic)
-        setShapes(shapes.filter(shape => shape.id !== selectedId));
+        // Delete all selected shapes from local state immediately (optimistic)
+        setShapes(shapes.filter(shape => !selectedIds.includes(shape.id)));
         
         // Clear selection
-        setSelectedId(null);
+        setSelectedIds([]);
         
-        // Delete from Firestore
-        deleteShape(selectedId);
+        // Delete from Firestore (batch operation)
+        selectedIds.forEach(id => deleteShape(id));
       }
     };
 
@@ -354,7 +408,7 @@ const Canvas = () => {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedId, shapes, editingText]);
+  }, [selectedIds, shapes, editingText]);
 
   // Note: beforeunload cleanup removed - it's unreliable and often fails
   // Instead, we rely on:
@@ -408,26 +462,108 @@ const Canvas = () => {
     setStagePos(newPos);
   };
 
-  // Handle stage mouse down (for panning)
+  // Handle stage mouse down (for panning or marquee selection)
   const handleStageMouseDown = (e) => {
-    // Only pan if clicking on the stage itself (not a shape)
+    // Only handle if clicking on the stage itself (not a shape)
     if (e.target === e.target.getStage()) {
-      isPanning.current = true;
+      hasDragged.current = false; // Reset drag tracking
+      justFinishedMarquee.current = false; // Reset marquee flag
+      
+      if (currentTool === 'hand') {
+        // Hand tool: Pan the canvas
+        isPanning.current = true;
+      } else if (currentTool === 'select') {
+        // Select tool: Start marquee selection
+        const stage = stageRef.current;
+        const pointerPos = stage.getPointerPosition();
+        const transform = stage.getAbsoluteTransform().copy().invert();
+        const canvasPos = transform.point(pointerPos);
+        
+        setIsMarqueeSelecting(true);
+        setMarqueeStart(canvasPos);
+        setMarqueeCurrent(canvasPos);
+      }
     }
   };
 
   // Handle stage mouse up
   const handleStageMouseUp = () => {
     isPanning.current = false;
+    
+    // Finish marquee selection
+    if (isMarqueeSelecting) {
+      setIsMarqueeSelecting(false);
+      justFinishedMarquee.current = true; // Mark that we just finished marquee
+      
+      // Calculate marquee bounds
+      if (marqueeStart && marqueeCurrent) {
+        const minX = Math.min(marqueeStart.x, marqueeCurrent.x);
+        const maxX = Math.max(marqueeStart.x, marqueeCurrent.x);
+        const minY = Math.min(marqueeStart.y, marqueeCurrent.y);
+        const maxY = Math.max(marqueeStart.y, marqueeCurrent.y);
+        
+        // Find shapes within marquee (handles different shape types correctly)
+        const selectedShapes = shapes.filter(shape => {
+          let shapeLeft, shapeRight, shapeTop, shapeBottom;
+          
+          if (shape.type === 'ellipse') {
+            // For ellipses, x/y is the CENTER, and we have width/height (which are diameters)
+            const radiusX = (shape.width || 120) / 2;
+            const radiusY = (shape.height || 80) / 2;
+            shapeLeft = shape.x - radiusX;
+            shapeRight = shape.x + radiusX;
+            shapeTop = shape.y - radiusY;
+            shapeBottom = shape.y + radiusY;
+          } else {
+            // For rectangles and text, x/y is top-left corner
+            shapeLeft = shape.x;
+            shapeRight = shape.x + (shape.width || 200);
+            shapeTop = shape.y;
+            shapeBottom = shape.y + (shape.height || 50);
+          }
+          
+          // Check if shape intersects marquee box (any overlap counts)
+          const intersects = !(
+            shapeRight < minX ||   // Shape is completely to the left
+            shapeLeft > maxX ||    // Shape is completely to the right
+            shapeBottom < minY ||  // Shape is completely above
+            shapeTop > maxY        // Shape is completely below
+          );
+          
+          return intersects;
+        });
+        
+        console.log(`[Marquee] Selected ${selectedShapes.length} shapes:`, selectedShapes.map(s => s.id));
+        setSelectedIds(selectedShapes.map(s => s.id));
+      }
+      
+      setMarqueeStart(null);
+      setMarqueeCurrent(null);
+    }
   };
 
-  // Handle stage mouse move (for panning)
+  // Handle stage mouse move (for panning or marquee selection)
   const handleStageMouseMove = (e) => {
     // Handle cursor tracking
     handleMouseMove(e);
 
-    // Handle panning
-    if (isPanning.current && currentTool === 'select') {
+    // Mark that user has dragged (not just clicked)
+    if (isMarqueeSelecting || isPanning.current) {
+      hasDragged.current = true;
+    }
+
+    // Handle marquee selection
+    if (isMarqueeSelecting) {
+      const stage = stageRef.current;
+      const pointerPos = stage.getPointerPosition();
+      const transform = stage.getAbsoluteTransform().copy().invert();
+      const canvasPos = transform.point(pointerPos);
+      setMarqueeCurrent(canvasPos);
+      return;
+    }
+
+    // Handle panning (only with hand tool)
+    if (isPanning.current && currentTool === 'hand') {
       const stage = stageRef.current;
       const newPos = {
         x: stagePos.x + e.evt.movementX,
@@ -440,6 +576,12 @@ const Canvas = () => {
 
   // Handle stage click (for creating shapes or deselecting)
   const handleStageClick = (e) => {
+    // Don't handle click if we just finished a marquee selection
+    if (justFinishedMarquee.current) {
+      justFinishedMarquee.current = false;
+      return;
+    }
+    
     // Only handle if clicked on stage itself (not a shape)
     const clickedOnEmpty = e.target === e.target.getStage();
     
@@ -479,24 +621,40 @@ const Canvas = () => {
 
         // Optimistic update: Add to local state immediately
         setShapes([...shapes, newShape]);
-        setSelectedId(newShape.id);
+        setSelectedIds([newShape.id]);
         setCurrentTool('select'); // Auto-switch back to select mode
 
         // Save to Firestore
         createShape(user.uid, newShape);
-      } else {
-        // Deselect
-        setSelectedId(null);
+      } else if (currentTool === 'select' && !hasDragged.current) {
+        // Only deselect if user clicked (not dragged for marquee)
+        setSelectedIds([]);
       }
+      // Hand tool clicks do nothing
     }
   };
 
-  // Handle shape selection
+  // Handle shape selection with modifier keys
   const handleShapeClick = (e, shapeId) => {
     e.cancelBubble = true; // Prevent stage click from firing
     
     if (currentTool === 'select') {
-      setSelectedId(shapeId);
+      const isShiftKey = e.evt.shiftKey;
+      const isMetaKey = e.evt.metaKey || e.evt.ctrlKey; // Cmd on Mac, Ctrl on Windows
+      
+      if (isShiftKey || isMetaKey) {
+        // Add/remove from selection
+        if (selectedIds.includes(shapeId)) {
+          // Remove from selection
+          setSelectedIds(selectedIds.filter(id => id !== shapeId));
+        } else {
+          // Add to selection
+          setSelectedIds([...selectedIds, shapeId]);
+        }
+      } else {
+        // Replace selection with this shape
+        setSelectedIds([shapeId]);
+      }
     }
   };
 
@@ -506,8 +664,32 @@ const Canvas = () => {
     isPanning.current = false;
     setIsDragging(true);
     
-    // Setup automatic cleanup on disconnect
-    setupDraggingCleanup(shapeId);
+    // If clicking on an unselected shape, select just that shape
+    if (!selectedIds.includes(shapeId)) {
+      setSelectedIds([shapeId]);
+    }
+    
+    // Store initial positions of all selected shapes for group drag
+    const draggedShape = shapes.find(s => s.id === shapeId);
+    if (draggedShape && selectedIds.includes(shapeId)) {
+      // Store relative offsets from the dragged shape to all other selected shapes
+      const offsets = {};
+      selectedIds.forEach(id => {
+        const shape = shapes.find(s => s.id === id);
+        if (shape) {
+          offsets[id] = {
+            dx: shape.x - draggedShape.x,
+            dy: shape.y - draggedShape.y,
+          };
+        }
+      });
+      // Store in ref so we can access during drag
+      e.target.groupDragOffsets = offsets;
+      e.target.draggedShapeId = shapeId;
+    }
+    
+    // Setup automatic cleanup on disconnect for all shapes
+    selectedIds.forEach(id => setupDraggingCleanup(id));
   };
 
   // Handle shape drag move (real-time position sync)
@@ -530,15 +712,49 @@ const Canvas = () => {
       updateCursorRTDB(user.uid, user.displayName || user.email, canvasPos.x, canvasPos.y);
     }
     
-    // Send real-time position update with full transform data
-    // (so shape doesn't disappear on other screens)
-    updateTransformState(user.uid, shapeId, {
-      x: node.x(),
-      y: node.y(),
-      width: shape.width || 200,
-      height: shape.height || 50,
-      rotation: shape.rotation || 0,
-    });
+    // Group drag: If multiple shapes are selected, move them all together
+    if (selectedIds.length > 1 && selectedIds.includes(shapeId)) {
+      const offsets = node.groupDragOffsets;
+      if (offsets) {
+        const newX = node.x();
+        const newY = node.y();
+        
+        // Update positions of all selected shapes in local state
+        setShapes(prevShapes => prevShapes.map(s => {
+          if (selectedIds.includes(s.id)) {
+            const offset = offsets[s.id] || { dx: 0, dy: 0 };
+            const updatedShape = {
+              ...s,
+              x: newX + offset.dx,
+              y: newY + offset.dy,
+              updatedBy: user.uid,
+              updatedAt: Date.now(),
+            };
+            
+            // Broadcast transform state to RTDB for live preview
+            updateTransformState(user.uid, s.id, {
+              x: updatedShape.x,
+              y: updatedShape.y,
+              width: s.width || 200,
+              height: s.height || 50,
+              rotation: s.rotation || 0,
+            });
+            
+            return updatedShape;
+          }
+          return s;
+        }));
+      }
+    } else {
+      // Single shape drag (existing behavior)
+      updateTransformState(user.uid, shapeId, {
+        x: node.x(),
+        y: node.y(),
+        width: shape.width || 200,
+        height: shape.height || 50,
+        rotation: shape.rotation || 0,
+      });
+    }
   };
 
   // Handle shape drag end
@@ -547,8 +763,6 @@ const Canvas = () => {
     
     const node = e.target;
     const stage = node.getStage();
-    const newX = node.x();
-    const newY = node.y();
 
     // Update cursor position at drop point
     const stagePos = stage.getPointerPosition();
@@ -558,29 +772,58 @@ const Canvas = () => {
       updateCursorRTDB(user.uid, user.displayName || user.email, canvasPos.x, canvasPos.y);
     }
 
-    // Optimistic update: Update local state immediately
-    const newShapes = shapes.map((shape) => {
-      if (shape.id === shapeId) {
-        return {
-          ...shape,
-          x: newX,
-          y: newY,
-          updatedBy: user.uid,
-          updatedAt: Date.now(),
-        };
+    // Group drag: Save all selected shapes to Firestore
+    if (selectedIds.length > 1 && selectedIds.includes(shapeId)) {
+      const offsets = node.groupDragOffsets;
+      if (offsets) {
+        const newX = node.x();
+        const newY = node.y();
+        
+        // Update all selected shapes in Firestore
+        selectedIds.forEach(id => {
+          const offset = offsets[id] || { dx: 0, dy: 0 };
+          const finalX = newX + offset.dx;
+          const finalY = newY + offset.dy;
+          
+          // Save to Firestore
+          updateShape(user.uid, id, { x: finalX, y: finalY });
+          
+          // Clear live dragging state after delay
+          setTimeout(() => {
+            clearDraggingPosition(id);
+          }, 300);
+        });
+        
+        // Note: Local state already updated in handleShapeDragMove
       }
-      return shape;
-    });
-    setShapes(newShapes);
+    } else {
+      // Single shape drag (existing behavior)
+      const newX = node.x();
+      const newY = node.y();
+      
+      // Optimistic update: Update local state immediately
+      const newShapes = shapes.map((shape) => {
+        if (shape.id === shapeId) {
+          return {
+            ...shape,
+            x: newX,
+            y: newY,
+            updatedBy: user.uid,
+            updatedAt: Date.now(),
+          };
+        }
+        return shape;
+      });
+      setShapes(newShapes);
 
-    // Save to Firestore (persists final position)
-    updateShape(user.uid, shapeId, { x: newX, y: newY });
+      // Save to Firestore (persists final position)
+      updateShape(user.uid, shapeId, { x: newX, y: newY });
 
-    // Clear live dragging state AFTER a delay to prevent flicker
-    // This gives Firestore time to propagate the final position
-    setTimeout(() => {
-      clearDraggingPosition(shapeId);
-    }, 300); // 300ms delay matches typical Firestore propagation
+      // Clear live dragging state AFTER a delay to prevent flicker
+      setTimeout(() => {
+        clearDraggingPosition(shapeId);
+      }, 300);
+    }
   };
 
   // Handle shape transform start
@@ -663,7 +906,7 @@ const Canvas = () => {
   const handleToolChange = (tool) => {
     setCurrentTool(tool);
     if (tool !== 'select') {
-      setSelectedId(null);
+      setSelectedIds([]);
     }
   };
 
@@ -671,10 +914,10 @@ const Canvas = () => {
   const handleColorChange = (color) => {
     setCurrentColor(color);
     
-    // If a shape is selected, update its color immediately
-    if (selectedId) {
+    // If shapes are selected, update their color immediately
+    if (selectedIds.length > 0) {
       const newShapes = shapes.map((shape) => {
-        if (shape.id === selectedId) {
+        if (selectedIds.includes(shape.id)) {
           return {
             ...shape,
             fill: color,
@@ -686,8 +929,8 @@ const Canvas = () => {
       });
       setShapes(newShapes);
       
-      // Save to Firestore
-      updateShape(user.uid, selectedId, { fill: color });
+      // Save to Firestore (batch operation)
+      selectedIds.forEach(id => updateShape(user.uid, id, { fill: color }));
     }
   };
 
@@ -703,8 +946,8 @@ const Canvas = () => {
     const textPosition = textNode.getAbsolutePosition();
     const stageBox = stage.container().getBoundingClientRect();
 
-    // Deselect shape while editing
-    setSelectedId(null);
+    // Deselect shapes while editing
+    setSelectedIds([]);
     
     setEditingText(shape.id);
     setTextEditorValue(shape.text || '');
@@ -756,17 +999,17 @@ const Canvas = () => {
     document.body.removeChild(link);
   };
 
-  // Bring selected shape to front
+  // Bring selected shapes to front
   const handleBringToFront = () => {
-    if (!selectedId) return;
+    if (selectedIds.length === 0) return;
     
-    const selectedShape = shapes.find(s => s.id === selectedId);
-    if (!selectedShape) return;
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id))
+      .map(s => ({ ...s, updatedBy: user.uid, updatedAt: Date.now() }));
 
     // Move to end of array (rendered last = on top)
     const newShapes = [
-      ...shapes.filter(s => s.id !== selectedId),
-      { ...selectedShape, updatedBy: user.uid, updatedAt: Date.now() }
+      ...shapes.filter(s => !selectedIds.includes(s.id)),
+      ...selectedShapes
     ];
     setShapes(newShapes);
     
@@ -774,17 +1017,17 @@ const Canvas = () => {
     // For multi-user consistency, we'd need to add a z-index field to Firestore
   };
 
-  // Send selected shape to back
+  // Send selected shapes to back
   const handleSendToBack = () => {
-    if (!selectedId) return;
+    if (selectedIds.length === 0) return;
     
-    const selectedShape = shapes.find(s => s.id === selectedId);
-    if (!selectedShape) return;
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id))
+      .map(s => ({ ...s, updatedBy: user.uid, updatedAt: Date.now() }));
 
     // Move to start of array (rendered first = on bottom)
     const newShapes = [
-      { ...selectedShape, updatedBy: user.uid, updatedAt: Date.now() },
-      ...shapes.filter(s => s.id !== selectedId)
+      ...selectedShapes,
+      ...shapes.filter(s => !selectedIds.includes(s.id))
     ];
     setShapes(newShapes);
   };
@@ -799,7 +1042,7 @@ const Canvas = () => {
         onExport={handleExport}
         onBringToFront={handleBringToFront}
         onSendToBack={handleSendToBack}
-        hasSelection={!!selectedId}
+        hasSelection={selectedIds.length > 0}
       />
       <PresencePanel users={onlineUsers} currentUser={user} />
       
@@ -871,14 +1114,22 @@ const Canvas = () => {
 
         {/* Shapes layer */}
         <Layer>
-          {getVisibleShapes(shapes, selectedId, isDragging, isTransforming).map((shape) => {
-            const isSelected = selectedId === shape.id;
+          {getVisibleShapes(shapes, selectedIds, isDragging, isTransforming).map((shape) => {
+            const isSelected = selectedIds.includes(shape.id);
             
             // Check if this shape is being dragged/transformed by another user
             const remoteTransform = remoteDragging.find(drag => drag.shapeId === shape.id);
             
-            // Check if this shape is selected by another user
-            const remoteSelection = remoteSelections.find(sel => sel.shapeId === shape.id);
+            // Check if this shape is selected by another user (handle both array and string)
+            const remoteSelection = remoteSelections.find(sel => {
+              // Support both old (shapeId) and new (shapeIds) format
+              if (sel.shapeIds) {
+                return sel.shapeIds.includes(shape.id);
+              } else if (sel.shapeId) {
+                return sel.shapeId === shape.id;
+              }
+              return false;
+            });
             
             // Use remote transform data if available, otherwise use shape's data
             // Handle partial transform data gracefully
@@ -970,27 +1221,61 @@ const Canvas = () => {
             return null;
           })}
           
-          {/* Transformer for resize and rotate handles */}
-          <Transformer
-            ref={transformerRef}
-            enabledAnchors={[
-              'top-left',
-              'top-right',
-              'bottom-left',
-              'bottom-right',
-              'middle-left',
-              'middle-right',
-              'top-center',
-              'bottom-center',
-            ]}
-            rotateEnabled={true}
-            borderStroke="#0066FF"
-            borderStrokeWidth={2}
-            anchorStroke="#0066FF"
-            anchorFill="white"
-            anchorSize={8}
-            anchorCornerRadius={2}
-          />
+          {/* Marquee selection box */}
+          {isMarqueeSelecting && marqueeStart && marqueeCurrent && (
+            <Rect
+              x={Math.min(marqueeStart.x, marqueeCurrent.x)}
+              y={Math.min(marqueeStart.y, marqueeCurrent.y)}
+              width={Math.abs(marqueeCurrent.x - marqueeStart.x)}
+              height={Math.abs(marqueeCurrent.y - marqueeStart.y)}
+              stroke="#0066FF"
+              strokeWidth={2}
+              dash={[5, 5]}
+              fill="rgba(0, 102, 255, 0.1)"
+              listening={false}
+            />
+          )}
+          
+          {/* Selection bounding box for multiple selections */}
+          {selectedIds.length > 1 && (() => {
+            const bounds = getSelectionBounds(shapes, selectedIds);
+            return bounds ? (
+              <Rect
+                x={bounds.x}
+                y={bounds.y}
+                width={bounds.width}
+                height={bounds.height}
+                stroke="#0066FF"
+                strokeWidth={2}
+                dash={[10, 5]}
+                listening={false}
+              />
+            ) : null;
+          })()}
+          
+          {/* Transformer for resize and rotate handles (single selection only) */}
+          {selectedIds.length === 1 && (
+            <Transformer
+              ref={transformerRef}
+              enabledAnchors={[
+                'top-left',
+                'top-right',
+                'bottom-left',
+                'bottom-right',
+                'middle-left',
+                'middle-right',
+                'top-center',
+                'bottom-center',
+              ]}
+              rotateEnabled={true}
+              borderStroke="#0066FF"
+              borderStrokeWidth={2}
+              anchorStroke="#0066FF"
+              anchorFill="white"
+              anchorSize={8}
+              anchorCornerRadius={2}
+            />
+          )}
         </Layer>
 
         {/* Cursors layer (on top) */}

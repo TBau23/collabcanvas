@@ -33,10 +33,18 @@ const CanvasToolbar = ({
         <button
           className={`tool-button ${currentTool === 'select' ? 'active' : ''}`}
           onClick={() => onToolChange('select')}
-          title="Select Tool"
+          title="Select Tool (V)"
         >
           <span className="tool-icon">↖</span>
           <span className="tool-label">Select</span>
+        </button>
+        <button
+          className={`tool-button ${currentTool === 'hand' ? 'active' : ''}`}
+          onClick={() => onToolChange('hand')}
+          title="Hand Tool (H) - Pan Canvas"
+        >
+          <span className="tool-icon">✋</span>
+          <span className="tool-label">Hand</span>
         </button>
         <button
           className={`tool-button ${currentTool === 'rectangle' ? 'active' : ''}`}
