@@ -115,7 +115,7 @@
 }
 
 /* Layer Controls */
-.layer-controls {
+.toolbar-layer-controls {
   display: flex;
   gap: 4px;
 }

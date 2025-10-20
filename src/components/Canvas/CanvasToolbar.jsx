@@ -154,7 +154,7 @@ const CanvasToolbar = ({
       {/* Layer Controls */}
       <div className="toolbar-section">
         <div className="toolbar-label">Layer</div>
-        <div className="layer-controls">
+        <div className="toolbar-layer-controls">
           <button
             className="tool-button small"
             onClick={onBringToFront}
