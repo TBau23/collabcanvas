@@ -285,7 +285,6 @@ const executeTool = async (toolCall, userId, currentShapes) => {
       }
 
       case 'updateShape': {
-        console.log('[AI] updateShape called with args:', args);
         
         const updates = {};
         if (args.x !== undefined) updates.x = args.x;
@@ -295,7 +294,6 @@ const executeTool = async (toolCall, userId, currentShapes) => {
         if (args.fill !== undefined) updates.fill = args.fill;
         if (args.rotation !== undefined) updates.rotation = args.rotation;
         
-        console.log('[AI] updateShape updates:', updates);
         
         if (Object.keys(updates).length === 0) {
           console.warn('[AI] updateShape called but no updates provided!');
@@ -506,7 +504,7 @@ export const sendCommand = async (message, userId, currentShapes = []) => {
     let createdShapes = [];
     
     if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-      console.log(`[AI] Executing ${aiMessage.tool_calls.length} tool calls in parallel`);
+
       
       // Execute all tool calls in parallel using Promise.all
       // This dramatically improves performance for multi-shape operations
@@ -520,8 +518,6 @@ export const sendCommand = async (message, userId, currentShapes = []) => {
           };
         })
       );
-      
-      console.log(`[AI] Completed ${toolResults.length} tool calls`);
       
       // Collect all created shapes for optimistic updates
       toolResults.forEach(tr => {

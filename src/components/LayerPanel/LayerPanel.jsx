@@ -13,11 +13,16 @@ const LayerPanel = ({
   const [draggedIndex, setDraggedIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
 
-  // Sort shapes by zIndex (descending) so top layers show first
-  const sortedShapes = [...shapes].sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0));
+  // Filter out invalid shapes and sort by zIndex (descending) so top layers show first
+  const sortedShapes = [...shapes]
+    .filter(shape => shape && shape.id && shape.type) // Only valid shapes with required fields
+    .sort((a, b) => (b.zIndex || 0) - (a.zIndex || 0));
 
   // Get shape display name
   const getShapeName = (shape) => {
+    if (!shape || !shape.type) {
+      return 'Unknown';
+    }
     if (shape.type === 'text') {
       return shape.text || 'Text';
     }
@@ -26,6 +31,9 @@ const LayerPanel = ({
 
   // Get shape icon
   const getShapeIcon = (shape) => {
+    if (!shape || !shape.type) {
+      return '?';
+    }
     switch (shape.type) {
       case 'rectangle':
         return '▭';

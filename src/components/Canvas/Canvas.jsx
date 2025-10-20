@@ -181,7 +181,7 @@ const Canvas = () => {
     
     // Log culling stats occasionally for debugging (remove in production)
     if (shapes.length > 100 && Math.random() < 0.02) { // Log 2% of frames when many shapes
-      console.log(`[Viewport Culling] ${visibleShapes.length}/${shapes.length} visible (${Math.round((1 - visibleShapes.length / shapes.length) * 100)}% culled)`);
+
     }
     
     return visibleShapes;
@@ -203,18 +203,15 @@ const Canvas = () => {
   // Subscribe to cursor updates from other users
   useEffect(() => {
     const timestamp = new Date().toISOString();
-    console.log(`[CANVAS-DIAG ${timestamp}] ===== CURSOR SUBSCRIPTION EFFECT TRIGGERED =====`);
     
     if (!user) {
-      console.log(`[CANVAS-DIAG ${timestamp}] No user, skipping cursor setup`);
+
       return;
     }
 
-    console.log(`[CANVAS-DIAG ${timestamp}] Setting up cursor cleanup for user: ${user.uid}`);
     // Setup automatic cursor cleanup on disconnect (waits for connection internally)
     setupCursorCleanup(user.uid);
 
-    console.log(`[CANVAS-DIAG ${timestamp}] Subscribing to cursor updates...`);
     const unsubscribe = subscribeToCursorsRTDB((remoteCursors) => {
       const otherCursors = remoteCursors.filter((c) => c.userId !== user.uid);
       setCursors(otherCursors);
@@ -222,7 +219,6 @@ const Canvas = () => {
 
     return () => {
       const cleanupTimestamp = new Date().toISOString();
-      console.log(`[CANVAS-DIAG ${cleanupTimestamp}] Unsubscribing from cursor updates`);
       unsubscribe();
     };
   }, [user]);
@@ -263,6 +259,11 @@ const Canvas = () => {
 
     const processShapeUpdate = (remoteShapes) => {
       setShapes((currentShapes) => {
+        // Filter out invalid shapes at the source
+        const validRemoteShapes = remoteShapes.filter(shape => 
+          shape && shape.id && shape.type && typeof shape.x === 'number' && typeof shape.y === 'number'
+        );
+
         // Create a map of current shapes for easy lookup
         const currentShapesMap = new Map(
           currentShapes.map((shape) => [shape.id, shape])
@@ -270,7 +271,7 @@ const Canvas = () => {
 
         // Trust Firestore as source of truth - only keep shapes that exist remotely
         // Real-time position updates during drag/transform are handled by RTDB
-        const mergedShapes = remoteShapes.map((remoteShape) => {
+        const mergedShapes = validRemoteShapes.map((remoteShape) => {
           const localShape = currentShapesMap.get(remoteShape.id);
 
           // If shape doesn't exist locally, add it
@@ -330,18 +331,17 @@ const Canvas = () => {
   // Subscribe to remote selection updates
   useEffect(() => {
     const timestamp = new Date().toISOString();
-    console.log(`[CANVAS-DIAG ${timestamp}] ===== SELECTION SUBSCRIPTION EFFECT TRIGGERED =====`);
+
     
     if (!user) {
-      console.log(`[CANVAS-DIAG ${timestamp}] No user, skipping selection setup`);
       return;
     }
 
-    console.log(`[CANVAS-DIAG ${timestamp}] Setting up selection cleanup for user: ${user.uid}`);
+
     // Setup automatic selection cleanup on disconnect (waits for connection internally)
     setupSelectionCleanup(user.uid);
 
-    console.log(`[CANVAS-DIAG ${timestamp}] Subscribing to selection updates...`);
+
     const unsubscribe = subscribeToSelections((selections) => {
       // Filter out our own selection
       const otherSelections = selections.filter(sel => sel.userId !== user.uid);
@@ -350,7 +350,7 @@ const Canvas = () => {
 
     return () => {
       const cleanupTimestamp = new Date().toISOString();
-      console.log(`[CANVAS-DIAG ${cleanupTimestamp}] Unsubscribing from selection updates`);
+
       unsubscribe();
     };
   }, [user]);
@@ -358,40 +358,36 @@ const Canvas = () => {
   // Initialize presence and handle reconnection
   useEffect(() => {
     const timestamp = new Date().toISOString();
-    console.log(`[CANVAS-DIAG ${timestamp}] ===== PRESENCE EFFECT TRIGGERED =====`);
+
     
     if (!user) {
-      console.log(`[CANVAS-DIAG ${timestamp}] No user, skipping presence setup`);
+
       return;
     }
 
     const userName = user.displayName || user.email;
-    console.log(`[CANVAS-DIAG ${timestamp}] Setting up presence for: ${userName} (${user.uid})`);
+
 
     // Set user online (waits for connection internally)
-    console.log(`[CANVAS-DIAG ${timestamp}] Calling setUserOnlineRTDB()...`);
     setUserOnlineRTDB(user.uid, userName);
 
     // Subscribe to connection state to handle reconnection
-    console.log(`[CANVAS-DIAG ${timestamp}] Subscribing to connection state changes...`);
+
     const unsubscribe = subscribeToConnectionState((connected) => {
       const innerTimestamp = new Date().toISOString();
       if (connected) {
-        console.log(`[CANVAS-DIAG ${innerTimestamp}] 🟢 RTDB CONNECTED - re-registering presence and cleanup handlers`);
         // Re-register all onDisconnect handlers when reconnecting
         setUserOnlineRTDB(user.uid, userName);
         setupCursorCleanup(user.uid);
         setupSelectionCleanup(user.uid);
       } else {
-        console.log(`[CANVAS-DIAG ${innerTimestamp}] 🔴 RTDB DISCONNECTED`);
       }
     });
 
     // Cleanup on unmount
     return () => {
       const cleanupTimestamp = new Date().toISOString();
-      console.log(`[CANVAS-DIAG ${cleanupTimestamp}] ===== PRESENCE EFFECT CLEANUP (Component Unmounting) =====`);
-      console.log(`[CANVAS-DIAG ${cleanupTimestamp}] Unsubscribing from connection state...`);
+
       unsubscribe();
       // NOTE: Manual cleanup is now handled in authService.logout() BEFORE signing out
       // This ensures auth token is still valid when cleaning up RTDB data
@@ -454,7 +450,6 @@ const Canvas = () => {
         e.preventDefault();
         const selectedShapes = shapes.filter(shape => selectedIds.includes(shape.id));
         setClipboard(selectedShapes);
-        console.log(`[Copy] Copied ${selectedShapes.length} shape(s) to clipboard`);
         return;
       }
       
@@ -486,7 +481,6 @@ const Canvas = () => {
         // Save to Firestore using batch operation (single atomic transaction)
         createShapeBatch(user.uid, newShapes);
         
-        console.log(`[Paste] Pasted ${newShapes.length} shape(s)`);
         return;
       }
       
@@ -507,7 +501,6 @@ const Canvas = () => {
         // Delete from Firestore using batch operation (single atomic transaction)
         deleteShapeBatch(selectedIds);
         
-        console.log(`[Cut] Cut ${selectedShapes.length} shape(s) to clipboard`);
         return;
       }
       
@@ -657,7 +650,6 @@ const Canvas = () => {
           return intersects;
         });
         
-        console.log(`[Marquee] Selected ${selectedShapes.length} shapes:`, selectedShapes.map(s => s.id));
         setSelectedIds(selectedShapes.map(s => s.id));
       }
       
@@ -1343,6 +1335,7 @@ const Canvas = () => {
         {/* Shapes layer */}
         <Layer>
           {getVisibleShapes(shapes, selectedIds, isDragging, isTransforming)
+            .filter(shape => shape && shape.id && shape.type) // Only render valid shapes with required fields
             .filter(shape => shape.visible !== false) // Don't render hidden shapes
             .map((shape) => {
             const isSelected = selectedIds.includes(shape.id);
@@ -1688,7 +1681,6 @@ const Canvas = () => {
         onShapesCreated={(newShapes) => {
           // Optimistic update: Add AI-generated shapes immediately to local state
           // Firestore will confirm in background (200-300ms), but user sees instant feedback
-          console.log(`[Canvas] Optimistically adding ${newShapes.length} AI-generated shapes`);
           setShapes([...shapes, ...newShapes]);
         }}
       />

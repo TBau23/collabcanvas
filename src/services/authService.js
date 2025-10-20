@@ -54,14 +54,11 @@ export const login = async (email, password) => {
  */
 export const logout = async () => {
   const timestamp = new Date().toISOString();
-  console.log(`[AUTH-DIAG ${timestamp}] ===== LOGOUT INITIATED =====`);
   
   try {
     const currentUser = auth.currentUser;
     
     if (currentUser) {
-      console.log(`[AUTH-DIAG ${timestamp}] Current user: ${currentUser.uid}`);
-      console.log(`[AUTH-DIAG ${timestamp}] Cleaning up RTDB data BEFORE signing out...`);
       
       // Clean up RTDB data while still authenticated
       // This ensures auth.uid is still valid for security rules
@@ -71,7 +68,7 @@ export const logout = async () => {
         clearSelection(currentUser.uid),
       ]);
       
-      console.log(`[AUTH-DIAG ${timestamp}] ✅ RTDB cleanup complete, now signing out...`);
+
     }
     
     await signOut(auth);

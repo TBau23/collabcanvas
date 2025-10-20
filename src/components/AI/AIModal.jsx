@@ -69,7 +69,6 @@ const AIModal = ({ isOpen, onClose, currentShapes, onShapesCreated }) => {
       if (result.success) {
         // OPTIMISTIC UPDATE: Add created shapes to Canvas immediately
         if (result.createdShapes && result.createdShapes.length > 0 && onShapesCreated) {
-          console.log(`[AIModal] Optimistically adding ${result.createdShapes.length} shapes to canvas`);
           onShapesCreated(result.createdShapes);
         }
         

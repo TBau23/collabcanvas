@@ -20,12 +20,9 @@ onValue(connectedRef, (snapshot) => {
   connectionChangeCount++;
   
   const timestamp = new Date().toISOString();
-  console.log(`[RTDB-DIAG ${timestamp}] Connection state change #${connectionChangeCount}: ${previousState ? 'CONNECTED' : 'DISCONNECTED'} → ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
-  console.log(`[RTDB-DIAG ${timestamp}] Active connection listeners: ${connectionListeners.length}`);
   
   // Notify all listeners of connection state change
   connectionListeners.forEach((callback, index) => {
-    console.log(`[RTDB-DIAG ${timestamp}] Notifying listener #${index} of connection state: ${isConnected}`);
     callback(isConnected);
   });
 });
@@ -38,26 +35,23 @@ const waitForConnection = () => {
   const timestamp = new Date().toISOString();
   
   if (isConnected) {
-    console.log(`[RTDB-DIAG ${timestamp}] waitForConnection() - Already connected, returning immediately`);
+
     return Promise.resolve();
   }
   
-  console.log(`[RTDB-DIAG ${timestamp}] waitForConnection() - NOT connected, waiting for connection...`);
+
   
   return new Promise((resolve) => {
     const listener = (connected) => {
       const innerTimestamp = new Date().toISOString();
-      console.log(`[RTDB-DIAG ${innerTimestamp}] waitForConnection listener triggered - connected: ${connected}`);
       
       if (connected) {
-        console.log(`[RTDB-DIAG ${innerTimestamp}] waitForConnection - Connection established! Resolving promise and removing listener`);
         // Remove this listener once connected
         connectionListeners = connectionListeners.filter(l => l !== listener);
         resolve();
       }
     };
     connectionListeners.push(listener);
-    console.log(`[RTDB-DIAG ${timestamp}] waitForConnection() - Added listener, total listeners: ${connectionListeners.length}`);
   });
 };
 
@@ -145,23 +139,17 @@ export const subscribeToCursorsRTDB = (callback) => {
  */
 export const setupCursorCleanup = async (userId) => {
   const timestamp = new Date().toISOString();
-  console.log(`[RTDB-DIAG ${timestamp}] ===== setupCursorCleanup() called for user: ${userId} =====`);
-  console.log(`[RTDB-DIAG ${timestamp}] Current connection state: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
+
   
   try {
     // Wait for connection before registering onDisconnect
-    console.log(`[RTDB-DIAG ${timestamp}] Calling waitForConnection()...`);
     await waitForConnection();
-    console.log(`[RTDB-DIAG ${timestamp}] waitForConnection() resolved! Connection is now: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
     
     const cursorRef = ref(rtdb, `sessions/${CANVAS_ID}/cursors/${userId}`);
-    console.log(`[RTDB-DIAG ${timestamp}] Cursor ref created: sessions/${CANVAS_ID}/cursors/${userId}`);
     
     // Setup automatic removal on disconnect
-    console.log(`[RTDB-DIAG ${timestamp}] Registering onDisconnect().remove() handler...`);
     const disconnectRef = onDisconnect(cursorRef);
     await disconnectRef.remove();
-    console.log(`[RTDB-DIAG ${timestamp}] ✅ Cursor cleanup onDisconnect handler REGISTERED for user ${userId}`);
   } catch (error) {
     console.error(`[RTDB-DIAG ${timestamp}] ❌ ERROR setting up cursor cleanup:`, error);
     console.error(`[RTDB-DIAG ${timestamp}] Error stack:`, error.stack);
@@ -174,14 +162,10 @@ export const setupCursorCleanup = async (userId) => {
  */
 export const deleteCursorRTDB = async (userId) => {
   const timestamp = new Date().toISOString();
-  console.log(`[RTDB-DIAG ${timestamp}] ===== deleteCursorRTDB() called for user: ${userId} =====`);
-  console.log(`[RTDB-DIAG ${timestamp}] Current connection state: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
   
   try {
     const cursorRef = ref(rtdb, `sessions/${CANVAS_ID}/cursors/${userId}`);
-    console.log(`[RTDB-DIAG ${timestamp}] Manually removing cursor...`);
     await remove(cursorRef);
-    console.log(`[RTDB-DIAG ${timestamp}] ✅ Successfully removed cursor manually`);
   } catch (error) {
     console.error(`[RTDB-DIAG ${timestamp}] ❌ ERROR deleting cursor:`, error);
     console.error(`[RTDB-DIAG ${timestamp}] Error stack:`, error.stack);
@@ -360,21 +344,13 @@ export const subscribeToSelections = (callback) => {
  */
 export const setupSelectionCleanup = async (userId) => {
   const timestamp = new Date().toISOString();
-  console.log(`[RTDB-DIAG ${timestamp}] ===== setupSelectionCleanup() called for user: ${userId} =====`);
-  console.log(`[RTDB-DIAG ${timestamp}] Current connection state: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
   
   try {
-    console.log(`[RTDB-DIAG ${timestamp}] Calling waitForConnection()...`);
     await waitForConnection();
-    console.log(`[RTDB-DIAG ${timestamp}] waitForConnection() resolved! Connection is now: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
     
     const selectionRef = ref(rtdb, `sessions/${CANVAS_ID}/selections/${userId}`);
-    console.log(`[RTDB-DIAG ${timestamp}] Selection ref created: sessions/${CANVAS_ID}/selections/${userId}`);
-    
-    console.log(`[RTDB-DIAG ${timestamp}] Registering onDisconnect().remove() handler...`);
     const disconnectRef = onDisconnect(selectionRef);
     await disconnectRef.remove();
-    console.log(`[RTDB-DIAG ${timestamp}] ✅ Selection cleanup onDisconnect handler REGISTERED for user ${userId}`);
   } catch (error) {
     console.error(`[RTDB-DIAG ${timestamp}] ❌ ERROR setting up selection cleanup:`, error);
     console.error(`[RTDB-DIAG ${timestamp}] Error stack:`, error.stack);
@@ -387,14 +363,10 @@ export const setupSelectionCleanup = async (userId) => {
  */
 export const clearSelection = async (userId) => {
   const timestamp = new Date().toISOString();
-  console.log(`[RTDB-DIAG ${timestamp}] ===== clearSelection() called for user: ${userId} =====`);
-  console.log(`[RTDB-DIAG ${timestamp}] Current connection state: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
   
   try {
     const selectionRef = ref(rtdb, `sessions/${CANVAS_ID}/selections/${userId}`);
-    console.log(`[RTDB-DIAG ${timestamp}] Manually removing selection...`);
     await remove(selectionRef);
-    console.log(`[RTDB-DIAG ${timestamp}] ✅ Successfully removed selection manually`);
   } catch (error) {
     console.error(`[RTDB-DIAG ${timestamp}] ❌ ERROR clearing selection:`, error);
     console.error(`[RTDB-DIAG ${timestamp}] Error stack:`, error.stack);
@@ -413,35 +385,25 @@ export const clearSelection = async (userId) => {
  */
 export const setUserOnlineRTDB = async (userId, userName) => {
   const timestamp = new Date().toISOString();
-  console.log(`[RTDB-DIAG ${timestamp}] ===== setUserOnlineRTDB() called for: ${userName} (${userId}) =====`);
-  console.log(`[RTDB-DIAG ${timestamp}] Current connection state: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
   
   try {
     // Wait for connection before doing anything
-    console.log(`[RTDB-DIAG ${timestamp}] Calling waitForConnection()...`);
     await waitForConnection();
-    console.log(`[RTDB-DIAG ${timestamp}] waitForConnection() resolved! Connection is now: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
     
     const presenceRef = ref(rtdb, `sessions/${CANVAS_ID}/presence/${userId}`);
-    console.log(`[RTDB-DIAG ${timestamp}] Presence ref created: sessions/${CANVAS_ID}/presence/${userId}`);
     
     // Set user online
-    console.log(`[RTDB-DIAG ${timestamp}] Writing online: true to RTDB...`);
     await set(presenceRef, {
       userName,
       online: true,
       color: getUserColor(userId),
       lastSeen: Date.now(),
     });
-    console.log(`[RTDB-DIAG ${timestamp}] ✅ Successfully wrote online: true`);
     
     // Setup automatic removal on disconnect (recommended Firebase pattern)
     // This MUST be called while connected, otherwise it silently fails
-    console.log(`[RTDB-DIAG ${timestamp}] Registering onDisconnect().remove() handler for presence...`);
     const disconnectRef = onDisconnect(presenceRef);
     await disconnectRef.remove();
-    console.log(`[RTDB-DIAG ${timestamp}] ✅ Presence onDisconnect handler REGISTERED for ${userName} (${userId})`);
-    console.log(`[RTDB-DIAG ${timestamp}] When this client disconnects, presence entry will be REMOVED`);
   } catch (error) {
     console.error(`[RTDB-DIAG ${timestamp}] ❌ ERROR setting user online:`, error);
     console.error(`[RTDB-DIAG ${timestamp}] Error stack:`, error.stack);
@@ -489,8 +451,6 @@ export const subscribeToPresenceRTDB = (callback) => {
  */
 export const setUserOfflineRTDB = async (userId) => {
   const timestamp = new Date().toISOString();
-  console.log(`[RTDB-DIAG ${timestamp}] ===== setUserOfflineRTDB() called for user: ${userId} =====`);
-  console.log(`[RTDB-DIAG ${timestamp}] Current connection state: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
   
   try {
     const presenceRef = ref(rtdb, `sessions/${CANVAS_ID}/presence/${userId}`);

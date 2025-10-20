@@ -6,12 +6,14 @@ const PresencePanel = ({ users, currentUser }) => {
   const otherUsers = users.filter((u) => u.userId !== currentUser.uid);
   
   const getInitials = (userName) => {
-    if (!userName) return '?';
-    const parts = userName.trim().split(' ');
-    if (parts.length >= 2) {
+    if (!userName || typeof userName !== 'string') return '?';
+    const trimmed = userName.trim();
+    if (!trimmed) return '?';
+    const parts = trimmed.split(' ');
+    if (parts.length >= 2 && parts[0].length > 0 && parts[1].length > 0) {
       return (parts[0][0] + parts[1][0]).toUpperCase();
     }
-    return userName.substring(0, 2).toUpperCase();
+    return trimmed.substring(0, Math.min(2, trimmed.length)).toUpperCase();
   };
 
   const totalUsers = otherUsers.length + 1; // +1 for current user
