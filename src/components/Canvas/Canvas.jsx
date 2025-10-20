@@ -227,13 +227,41 @@ const Canvas = () => {
     };
   }, [user]);
 
-  // Subscribe to shape updates from Firestore
+  // Subscribe to shape updates from Firestore with debounced processing
   useEffect(() => {
     if (!user) return;
 
-    const unsubscribe = subscribeToShapes((remoteShapes) => {
-      // Update shapes from Firestore
-      // Use functional update to ensure we're working with latest state
+    // Debounce helper: delays rapid-fire calls, processes leading + trailing edges
+    let timeoutId = null;
+    let pendingShapes = null;
+    let hasProcessedLeading = false;
+
+    const debouncedShapeUpdate = (remoteShapes) => {
+      // Leading edge: process first update immediately
+      if (!hasProcessedLeading) {
+        hasProcessedLeading = true;
+        processShapeUpdate(remoteShapes);
+      }
+      
+      // Store latest shapes for trailing edge
+      pendingShapes = remoteShapes;
+      
+      // Clear existing timeout
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      
+      // Trailing edge: process after 50ms of quiet
+      timeoutId = setTimeout(() => {
+        if (pendingShapes) {
+          processShapeUpdate(pendingShapes);
+          pendingShapes = null;
+        }
+        hasProcessedLeading = false;
+      }, 50);
+    };
+
+    const processShapeUpdate = (remoteShapes) => {
       setShapes((currentShapes) => {
         // Create a map of current shapes for easy lookup
         const currentShapesMap = new Map(
@@ -263,9 +291,16 @@ const Canvas = () => {
         // Shapes without zIndex default to 0 (backward compatibility)
         return mergedShapes.sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0));
       });
-    });
+    };
 
-    return unsubscribe;
+    const unsubscribe = subscribeToShapes(debouncedShapeUpdate);
+
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      unsubscribe();
+    };
   }, [user]);
 
   // Subscribe to presence updates
