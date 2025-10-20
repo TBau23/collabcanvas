@@ -3,13 +3,18 @@ import './CanvasToolbar.css';
 
 const CanvasToolbar = ({ 
   currentTool, 
-  currentColor, 
+  currentColor,
+  currentFontSize,
+  currentFontFamily,
   onToolChange, 
   onColorChange,
+  onFontSizeChange,
+  onFontFamilyChange,
   onExport,
   onBringToFront,
   onSendToBack,
-  hasSelection
+  hasSelection,
+  hasTextSelection
 }) => {
   const colors = [
     '#4A90E2', // Blue (default)
@@ -24,6 +29,20 @@ const CanvasToolbar = ({
     '#000000', // Black
     '#FF69B4', // Pink
     '#FFD700', // Gold
+  ];
+
+  const fontSizes = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72];
+  
+  const fontFamilies = [
+    'Arial',
+    'Helvetica',
+    'Times New Roman',
+    'Georgia',
+    'Courier New',
+    'Verdana',
+    'Trebuchet MS',
+    'Comic Sans MS',
+    'Impact',
   ];
 
   return (
@@ -98,6 +117,39 @@ const CanvasToolbar = ({
           />
         </div>
       </div>
+
+      {/* Font Controls - only show when text is selected */}
+      {hasTextSelection && (
+        <>
+          <div className="toolbar-section">
+            <div className="toolbar-label">Font Size</div>
+            <select
+              className="font-selector"
+              value={currentFontSize}
+              onChange={(e) => onFontSizeChange(Number(e.target.value))}
+            >
+              {fontSizes.map(size => (
+                <option key={size} value={size}>{size}px</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="toolbar-section">
+            <div className="toolbar-label">Font Family</div>
+            <select
+              className="font-selector"
+              value={currentFontFamily}
+              onChange={(e) => onFontFamilyChange(e.target.value)}
+            >
+              {fontFamilies.map(font => (
+                <option key={font} value={font} style={{ fontFamily: font }}>
+                  {font}
+                </option>
+              ))}
+            </select>
+          </div>
+        </>
+      )}
 
       {/* Layer Controls */}
       <div className="toolbar-section">

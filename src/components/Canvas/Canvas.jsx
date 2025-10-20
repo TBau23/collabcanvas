@@ -45,6 +45,8 @@ const Canvas = () => {
   // Tool and shape state
   const [currentTool, setCurrentTool] = useState('select');
   const [currentColor, setCurrentColor] = useState('#4A90E2');
+  const [currentFontSize, setCurrentFontSize] = useState(24);
+  const [currentFontFamily, setCurrentFontFamily] = useState('Arial');
   const [shapes, setShapes] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -362,7 +364,7 @@ const Canvas = () => {
     };
   }, [user]);
 
-  // Update Transformer and color picker when selection changes
+  // Update Transformer and property selectors when selection changes
   useEffect(() => {
     if (selectedIds.length > 0 && transformerRef.current) {
       // For now, attach transformer to first selected shape
@@ -372,10 +374,16 @@ const Canvas = () => {
         transformerRef.current.nodes([shapeRefs.current[firstSelectedId]]);
         transformerRef.current.getLayer().batchDraw();
         
-        // Update color picker to match first selected shape's color
+        // Update property selectors to match first selected shape
         const selectedShape = shapes.find(s => s.id === firstSelectedId);
         if (selectedShape) {
           setCurrentColor(selectedShape.fill);
+          
+          // Update font properties if it's a text shape
+          if (selectedShape.type === 'text') {
+            setCurrentFontSize(selectedShape.fontSize || 24);
+            setCurrentFontFamily(selectedShape.fontFamily || 'Arial');
+          }
         }
       }
     } else if (transformerRef.current) {
@@ -697,8 +705,8 @@ const Canvas = () => {
           zIndex: maxZIndex + 1, // Always create on top
           ...(currentTool === 'text' && { 
             text: 'Double-click to edit',
-            fontSize: 24,
-            fontFamily: 'Arial'
+            fontSize: currentFontSize,
+            fontFamily: currentFontFamily
           }),
           updatedBy: user.uid,
           updatedAt: Date.now(),
@@ -1025,6 +1033,64 @@ const Canvas = () => {
     }
   };
 
+  // Handle font size change
+  const handleFontSizeChange = (fontSize) => {
+    setCurrentFontSize(fontSize);
+    
+    // If text shapes are selected, update their font size immediately
+    if (selectedIds.length > 0) {
+      const newShapes = shapes.map((shape) => {
+        if (selectedIds.includes(shape.id) && shape.type === 'text') {
+          return {
+            ...shape,
+            fontSize: fontSize,
+            updatedBy: user.uid,
+            updatedAt: Date.now(),
+          };
+        }
+        return shape;
+      });
+      setShapes(newShapes);
+      
+      // Save to Firestore (batch operation - only text shapes)
+      selectedIds.forEach(id => {
+        const shape = shapes.find(s => s.id === id);
+        if (shape && shape.type === 'text') {
+          updateShape(user.uid, id, { fontSize: fontSize });
+        }
+      });
+    }
+  };
+
+  // Handle font family change
+  const handleFontFamilyChange = (fontFamily) => {
+    setCurrentFontFamily(fontFamily);
+    
+    // If text shapes are selected, update their font family immediately
+    if (selectedIds.length > 0) {
+      const newShapes = shapes.map((shape) => {
+        if (selectedIds.includes(shape.id) && shape.type === 'text') {
+          return {
+            ...shape,
+            fontFamily: fontFamily,
+            updatedBy: user.uid,
+            updatedAt: Date.now(),
+          };
+        }
+        return shape;
+      });
+      setShapes(newShapes);
+      
+      // Save to Firestore (batch operation - only text shapes)
+      selectedIds.forEach(id => {
+        const shape = shapes.find(s => s.id === id);
+        if (shape && shape.type === 'text') {
+          updateShape(user.uid, id, { fontFamily: fontFamily });
+        }
+      });
+    }
+  };
+
   // Handle double-click on text to edit inline
   const handleTextEdit = (shape) => {
     const stage = stageRef.current;
@@ -1145,12 +1211,17 @@ const Canvas = () => {
       <CanvasToolbar 
         currentTool={currentTool} 
         currentColor={currentColor}
+        currentFontSize={currentFontSize}
+        currentFontFamily={currentFontFamily}
         onToolChange={handleToolChange} 
         onColorChange={handleColorChange}
+        onFontSizeChange={handleFontSizeChange}
+        onFontFamilyChange={handleFontFamilyChange}
         onExport={handleExport}
         onBringToFront={handleBringToFront}
         onSendToBack={handleSendToBack}
         hasSelection={selectedIds.length > 0}
+        hasTextSelection={selectedIds.length > 0 && shapes.some(s => selectedIds.includes(s.id) && s.type === 'text')}
       />
       <PresencePanel users={onlineUsers} currentUser={user} />
       <LayerPanel 

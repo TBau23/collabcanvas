@@ -21,9 +21,10 @@ Canvas Details:
 Your capabilities:
 1. Create shapes with specific positions, sizes, and colors using createShape
 2. Update existing shapes (move, resize, recolor, rotate) using updateShape
-3. Get current canvas state to reference existing shapes using getCanvasState
-4. Create multiple shapes for complex layouts using createMultipleShapes ⭐
-5. Delete shapes using deleteShape
+3. Create multiple shapes for complex layouts using createMultipleShapes ⭐
+4. Delete shapes using deleteShape
+
+IMPORTANT: When commands reference existing shapes, the current canvas state (all shapes with their IDs, positions, colors, etc.) is automatically provided in your context. You don't need to request it - just use the shape information that's already available.
 
 CRITICAL PERFORMANCE RULE:
 ⚡ For 3+ shapes in ONE command, ALWAYS use createMultipleShapes (not multiple createShape calls)
@@ -41,13 +42,24 @@ Guidelines:
 - Use font size 24-32 for normal text, 40-60 for headlines
 - When arranging multiple shapes, space them appropriately (50-100px apart)
 - For complex commands like "create a login form", use text shapes for labels with appropriate shapes
-- Always call getCanvasState first if the command references existing shapes (e.g., "move the blue rectangle")
 - When multiple shapes match a description (e.g., multiple blue rectangles), operate on the first one and mention this in your response
 - For colors, convert common names to hex codes: red=#FF0000, blue=#0000FF, green=#00FF00, yellow=#FFFF00, orange=#FFA500, purple=#800080, pink=#FFC0CB, white=#FFFFFF, black=#000000, gray=#808080
 - When creating UI components (forms, buttons, labels), use text shapes for readability
 - Text should be readable - use dark colors (#000000, #333333) for text on light backgrounds
 
-Be concise and clear in your responses. Execute the requested actions and confirm what you did.`;
+CRITICAL: Tool Calling Rules
+⚡ You MUST execute the user's command with appropriate tool calls - don't just acknowledge!
+⚡ For "create X", call createShape or createMultipleShapes immediately
+⚡ For "move/change/update X", call updateShape immediately  
+⚡ For "delete X", call deleteShape immediately
+⚡ Use ALL necessary tools in a single response
+⚡ Examples:
+  ❌ BAD: User says "create a login form" → You respond "I'll create a form for you" (no tool calls)
+  ✅ GOOD: User says "create a login form" → You call createMultipleShapes with all form elements
+  ❌ BAD: User says "move the blue rectangle right" → You respond "Retrieved 50 shapes" (wrong action)
+  ✅ GOOD: User says "move the blue rectangle right" → You call updateShape with new x coordinate
+
+Be concise in text responses. Let your tool executions speak for themselves. Always take action!`;
 
 // Tool definitions for OpenAI function calling
 const TOOL_DEFINITIONS = [
@@ -105,13 +117,13 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'updateShape',
-      description: 'Update an existing shape\'s properties. Call getCanvasState first to find the shape ID.',
+      description: 'Update an existing shape\'s properties. Shape IDs are provided in the canvas state context.',
       parameters: {
         type: 'object',
         properties: {
           shapeId: {
             type: 'string',
-            description: 'ID of the shape to update (get this from getCanvasState)'
+            description: 'ID of the shape to update (from canvas state context)'
           },
           x: {
             type: 'number',
@@ -146,28 +158,16 @@ const TOOL_DEFINITIONS = [
     type: 'function',
     function: {
       name: 'deleteShape',
-      description: 'Delete a shape from the canvas. Call getCanvasState first to find the shape ID.',
+      description: 'Delete a shape from the canvas. Shape IDs are provided in the canvas state context.',
       parameters: {
         type: 'object',
         properties: {
           shapeId: {
             type: 'string',
-            description: 'ID of the shape to delete (get this from getCanvasState)'
+            description: 'ID of the shape to delete (from canvas state context)'
           }
         },
         required: ['shapeId']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'getCanvasState',
-      description: 'Get current canvas state (all shapes). Use this before manipulating or referencing existing shapes.',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: []
       }
     }
   },
@@ -301,15 +301,26 @@ const executeTool = async (toolCall, userId, currentShapes) => {
           console.warn('[AI] updateShape called but no updates provided!');
           return {
             success: false,
-            message: `No updates specified for shape ${args.shapeId}`
+            message: `No updates specified`
           };
         }
         
         await updateShape(userId, args.shapeId, updates);
+        
+        // Build user-friendly message based on what was updated
+        const updateTypes = [];
+        if (updates.x !== undefined || updates.y !== undefined) updateTypes.push('position');
+        if (updates.width !== undefined || updates.height !== undefined) updateTypes.push('size');
+        if (updates.fill !== undefined) updateTypes.push('color');
+        if (updates.rotation !== undefined) updateTypes.push('rotation');
+        
+        const action = updateTypes.length > 0 ? updateTypes.join(' and ') : 'properties';
+        
         return {
           success: true,
-          message: `Updated shape ${args.shapeId} with ${Object.keys(updates).join(', ')}`,
-          data: updates
+          message: `Updated ${action}`,
+          data: updates,
+          shapeId: args.shapeId // Keep for debugging if needed
         };
       }
 
@@ -317,16 +328,18 @@ const executeTool = async (toolCall, userId, currentShapes) => {
         await deleteShape(args.shapeId);
         return {
           success: true,
-          message: `Deleted shape ${args.shapeId}`
+          message: `Deleted the shape`,
+          shapeId: args.shapeId // Keep for debugging if needed
         };
       }
 
       case 'getCanvasState': {
-        // Return optimized canvas state - only essential data
+        // DEPRECATED: Canvas state is now always provided in context
+        console.warn('[AI] getCanvasState tool called but deprecated - canvas state already provided in context');
         const optimizedShapes = optimizeCanvasState(currentShapes);
         return {
           success: true,
-          message: `Retrieved ${currentShapes.length} shapes`,
+          message: `Canvas state already available`,
           data: optimizedShapes
         };
       }
