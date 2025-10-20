@@ -1,5 +1,5 @@
 import { db } from './firebase';
-import { doc, setDoc, deleteDoc, collection, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, collection, onSnapshot, writeBatch } from 'firebase/firestore';
 
 const CANVAS_ID = 'main-canvas';
 
@@ -84,5 +84,80 @@ export const subscribeToShapes = (callback) => {
       console.error('Error subscribing to shapes:', error);
     }
   );
+};
+
+/**
+ * Create multiple shapes in a single batch transaction
+ * @param {string} userId - User ID who created the shapes
+ * @param {Array<object>} shapesArray - Array of shape data objects
+ */
+export const createShapeBatch = async (userId, shapesArray) => {
+  try {
+    const batch = writeBatch(db);
+    const timestamp = Date.now();
+    
+    shapesArray.forEach(shapeData => {
+      const shapeRef = doc(db, 'canvases', CANVAS_ID, 'objects', shapeData.id);
+      batch.set(shapeRef, {
+        ...shapeData,
+        updatedBy: userId,
+        updatedAt: timestamp,
+      });
+    });
+    
+    await batch.commit();
+    console.log(`[Batch] Created ${shapesArray.length} shapes in single transaction`);
+  } catch (error) {
+    console.error('Error creating shapes batch:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update multiple shapes in a single batch transaction
+ * @param {string} userId - User ID who updated the shapes
+ * @param {Array<{shapeId: string, data: object}>} updates - Array of shape updates
+ */
+export const updateShapeBatch = async (userId, updates) => {
+  try {
+    const batch = writeBatch(db);
+    const timestamp = Date.now();
+    
+    updates.forEach(({ shapeId, data }) => {
+      const shapeRef = doc(db, 'canvases', CANVAS_ID, 'objects', shapeId);
+      batch.update(shapeRef, {
+        ...data,
+        updatedBy: userId,
+        updatedAt: timestamp,
+      });
+    });
+    
+    await batch.commit();
+    console.log(`[Batch] Updated ${updates.length} shapes in single transaction`);
+  } catch (error) {
+    console.error('Error updating shapes batch:', error);
+    throw error;
+  }
+};
+
+/**
+ * Delete multiple shapes in a single batch transaction
+ * @param {Array<string>} shapeIds - Array of shape IDs to delete
+ */
+export const deleteShapeBatch = async (shapeIds) => {
+  try {
+    const batch = writeBatch(db);
+    
+    shapeIds.forEach(shapeId => {
+      const shapeRef = doc(db, 'canvases', CANVAS_ID, 'objects', shapeId);
+      batch.delete(shapeRef);
+    });
+    
+    await batch.commit();
+    console.log(`[Batch] Deleted ${shapeIds.length} shapes in single transaction`);
+  } catch (error) {
+    console.error('Error deleting shapes batch:', error);
+    throw error;
+  }
 };
 

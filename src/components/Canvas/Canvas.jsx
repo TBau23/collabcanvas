@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Stage, Layer, Circle, Text, Rect, Ellipse, Transformer, Line, Shape } from 'react-konva';
 import { useAuth } from '../../context/AuthContext';
-import { createShape, updateShape, deleteShape, subscribeToShapes } from '../../services/canvasService';
+import { createShape, updateShape, deleteShape, subscribeToShapes, createShapeBatch, updateShapeBatch, deleteShapeBatch } from '../../services/canvasService';
 import { 
   updateCursorRTDB, 
   subscribeToCursorsRTDB, 
@@ -448,8 +448,8 @@ const Canvas = () => {
         // Select the newly pasted shapes
         setSelectedIds(newShapes.map(s => s.id));
         
-        // Save to Firestore (batch operation)
-        newShapes.forEach(shape => createShape(user.uid, shape));
+        // Save to Firestore using batch operation (single atomic transaction)
+        createShapeBatch(user.uid, newShapes);
         
         console.log(`[Paste] Pasted ${newShapes.length} shape(s)`);
         return;
@@ -469,8 +469,8 @@ const Canvas = () => {
         // Clear selection
         setSelectedIds([]);
         
-        // Delete from Firestore (batch operation)
-        selectedIds.forEach(id => deleteShape(id));
+        // Delete from Firestore using batch operation (single atomic transaction)
+        deleteShapeBatch(selectedIds);
         
         console.log(`[Cut] Cut ${selectedShapes.length} shape(s) to clipboard`);
         return;
@@ -487,8 +487,8 @@ const Canvas = () => {
         // Clear selection
         setSelectedIds([]);
         
-        // Delete from Firestore (batch operation)
-        selectedIds.forEach(id => deleteShape(id));
+        // Delete from Firestore using batch operation (single atomic transaction)
+        deleteShapeBatch(selectedIds);
       }
     };
 
@@ -878,20 +878,27 @@ const Canvas = () => {
         const newX = node.x();
         const newY = node.y();
         
-        // Update all selected shapes in Firestore
-        selectedIds.forEach(id => {
+        // Prepare batch update for all selected shapes
+        const updates = selectedIds.map(id => {
           const offset = offsets[id] || { dx: 0, dy: 0 };
           const finalX = newX + offset.dx;
           const finalY = newY + offset.dy;
           
-          // Save to Firestore
-          updateShape(user.uid, id, { x: finalX, y: finalY });
-          
-          // Clear live dragging state after delay
-          setTimeout(() => {
-            clearDraggingPosition(id);
-          }, 300);
+          return {
+            shapeId: id,
+            data: { x: finalX, y: finalY }
+          };
         });
+        
+        // Save to Firestore using batch operation (single atomic transaction)
+        updateShapeBatch(user.uid, updates);
+        
+        // Clear all live dragging states after delay
+        setTimeout(() => {
+          selectedIds.forEach(id => {
+            clearDraggingPosition(id);
+          });
+        }, 300);
         
         // Note: Local state already updated in handleShapeDragMove
       }
