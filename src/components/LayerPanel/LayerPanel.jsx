@@ -7,7 +7,8 @@ const LayerPanel = ({
   selectedIds, 
   onSelectShape, 
   remoteSelections,
-  user 
+  user,
+  onShapesUpdate // Callback for optimistic local updates
 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [draggedIndex, setDraggedIndex] = useState(null);
@@ -116,33 +117,72 @@ const LayerPanel = ({
       return;
     }
 
-    // Get the dragged and target shapes
+    // Get the dragged shape
     const draggedShape = sortedShapes[draggedIndex];
-    const targetShape = sortedShapes[dropIndex];
 
     // Calculate new zIndex based on drop position
     let newZIndex;
-    if (dropIndex === 0) {
+    let shapesToShift = []; // Track shapes that need to be shifted
+    
+    // Adjust dropIndex if dragging from above (since array will shift)
+    const effectiveDropIndex = draggedIndex < dropIndex ? dropIndex - 1 : dropIndex;
+    
+    if (effectiveDropIndex === 0) {
       // Dropped at top - get highest zIndex + 1
       const maxZIndex = Math.max(...sortedShapes.map(s => s.zIndex || 0));
       newZIndex = maxZIndex + 1;
-    } else if (dropIndex === sortedShapes.length - 1) {
-      // Dropped at bottom - get lowest zIndex - 1
+    } else if (effectiveDropIndex >= sortedShapes.length - 1) {
+      // Dropped at or below bottom - get lowest zIndex - 1
       const minZIndex = Math.min(...sortedShapes.map(s => s.zIndex || 0));
       newZIndex = minZIndex - 1;
     } else {
-      // Dropped in middle - average of neighbors
-      const aboveShape = sortedShapes[dropIndex - 1];
-      const belowShape = sortedShapes[dropIndex];
-      newZIndex = Math.floor(((aboveShape.zIndex || 0) + (belowShape.zIndex || 0)) / 2);
+      // Dropped in middle - calculate position between neighbors
+      const aboveShape = sortedShapes[effectiveDropIndex];
+      const belowShape = sortedShapes[effectiveDropIndex + 1];
+      const aboveZIndex = aboveShape.zIndex || 0;
+      const belowZIndex = belowShape.zIndex || 0;
       
-      // If rounding causes collision, increment
-      if (newZIndex === (belowShape.zIndex || 0)) {
-        newZIndex = (belowShape.zIndex || 0) + 1;
+      // Check if there's space between the two indices
+      if (aboveZIndex - belowZIndex > 1) {
+        // Simple case: plenty of space, use midpoint
+        newZIndex = Math.floor((aboveZIndex + belowZIndex) / 2);
+      } else {
+        // No space: shift all layers below to make room
+        // This prevents zIndex collisions and maintains precise ordering
+        newZIndex = belowZIndex;
+        
+        // Update all shapes at or below this position
+        shapesToShift = sortedShapes.filter(s => 
+          s.id !== draggedShape.id && (s.zIndex || 0) <= belowZIndex
+        );
+        
+        shapesToShift.forEach((shape, idx) => {
+          const shiftedZIndex = belowZIndex - idx - 1;
+          updateShape(user.uid, shape.id, { zIndex: shiftedZIndex });
+        });
       }
     }
 
-    // Update zIndex in Firestore
+    // Optimistic update: Update local state immediately for instant UI feedback
+    if (onShapesUpdate) {
+      const updatedShapes = shapes.map(s => {
+        if (s.id === draggedShape.id) {
+          return { ...s, zIndex: newZIndex, updatedBy: user.uid, updatedAt: Date.now() };
+        }
+        // Apply any shifts that were calculated above
+        const shiftShape = shapesToShift.find(shape => shape.id === s.id);
+        if (shiftShape) {
+          const idx = shapesToShift.indexOf(shiftShape);
+          const belowZIndex = sortedShapes[effectiveDropIndex + 1]?.zIndex || 0;
+          const shiftedZIndex = belowZIndex - idx - 1;
+          return { ...s, zIndex: shiftedZIndex, updatedBy: user.uid, updatedAt: Date.now() };
+        }
+        return s;
+      });
+      onShapesUpdate(updatedShapes);
+    }
+
+    // Update zIndex in Firestore (will sync back and confirm the change)
     updateShape(user.uid, draggedShape.id, { zIndex: newZIndex });
 
     setDraggedIndex(null);

@@ -1264,6 +1264,7 @@ const Canvas = () => {
         onSelectShape={setSelectedIds}
         remoteSelections={remoteSelections}
         user={user}
+        onShapesUpdate={setShapes}
       />
       
       <Stage
